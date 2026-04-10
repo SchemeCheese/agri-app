@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="142" viewBox="0 0 716 142">
+  <defs>
+    <linearGradient id="d2Body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#146B42"/>
+      <stop offset="1" stop-color="#0D3B25"/>
+    </linearGradient>
+    <linearGradient id="d2Leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#7FF2C5"/>
+      <stop offset="1" stop-color="#2BCB7B"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="100%" height="100%" fill="none"/>
+
+  <!-- Icon (unchanged) -->
+  <g transform="translate(26,14)">
+    <path d="M56 0 L112 116 L90 116 L74 86 H38 L22 116 H0 L56 0 Z" fill="url(#d2Body)"/>
+    <path d="M49 56 C56 36, 75 25, 98 21 C90 46, 73 66, 50 76 C46 70, 46 62, 49 56 Z"
+          fill="url(#d2Leaf)"/>
+    <path d="M10 116 C28 100, 47 95, 68 95 C89 95, 105 100, 112 116 Z"
+          fill="#2BCB7B" opacity="0.65"/>
+    <circle cx="86" cy="26" r="4" fill="#FFFFFF" opacity="0.18"/>
+  </g>
+
+  <!-- Wordmark (bigger only) -->
+  <g transform="translate(146,100)">
+    <text x="0" y="0"
+      font-family="Montserrat, Poppins, Inter, Arial, sans-serif"
+      font-size="80"
+      font-weight="700"
+      letter-spacing="2.5"
+      fill="#0D3B25">GRI-CONNECT</text>
+
+    <text x="0" y="0"
+      font-family="Montserrat, Poppins, Inter, Arial, sans-serif"
+      font-size="80"
+      font-weight="700"
+      letter-spacing="2.5"
+      fill="#7FF2C5" opacity="0.14">GRI-CONNECT</text>
+  </g>
+</svg>
