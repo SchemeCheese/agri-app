@@ -18,6 +18,7 @@ import { ProductCard } from '@/components/product/ProductCard';
 import { useProductSearch, useProducts } from '@/hooks/useProducts';
 import { useCartStore } from '@/store/cartStore';
 import { useAuthStore } from '@/store/authStore';
+import { useProductModerationStore } from '@/store/productModerationStore';
 import { formatPrice } from '@/utils/format';
 import { FontAwesome } from '@expo/vector-icons';
 import { resolveImageUrl } from '@/utils/image';
@@ -82,6 +83,10 @@ export default function SearchScreen() {
   const [sellerKeyword, setSellerKeyword] = useState('');
   const [sellerFilter, setSellerFilter] = useState<SellerFilter>('ALL');
   const [sellerSort, setSellerSort] = useState<SellerSort>('NEWEST');
+  const pausedProductIds = useProductModerationStore((state) => state.pausedProductIds);
+  const deletedProductIds = useProductModerationStore((state) => state.deletedProductIds);
+  const markPaused = useProductModerationStore((state) => state.markPaused);
+  const markDeleted = useProductModerationStore((state) => state.markDeleted);
 
   const resetProductForm = () => {
     setProductFormMode('create');
@@ -104,11 +109,19 @@ export default function SearchScreen() {
       const res = await api.get<SellerProduct[]>('/products/my-products', {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      setSellerProducts(Array.isArray(res.data) ? res.data : []);
+      const pausedSet = new Set(pausedProductIds);
+      const deletedSet = new Set(deletedProductIds);
+      const source = Array.isArray(res.data) ? res.data : [];
+
+      setSellerProducts(
+        source
+          .filter((item) => !deletedSet.has(item.id))
+          .map((item) => (pausedSet.has(item.id) ? { ...item, is_active: false } : item)),
+      );
     } catch {
       setSellerProducts([]);
     }
-  }, [isSeller, accessToken]);
+  }, [isSeller, accessToken, pausedProductIds, deletedProductIds]);
 
   const getMimeTypeFromUri = (uri: string) => {
     const normalized = uri.toLowerCase();
@@ -151,18 +164,30 @@ export default function SearchScreen() {
     setImageUrlInput('');
   };
 
+  const parseImageUrls = (input: string) =>
+    input
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const isValidImageUrl = (url: string) => /^https?:\/\//i.test(url) || url.startsWith('/');
+
   const applyImageUrl = () => {
-    const trimmed = imageUrlInput.trim();
-    if (!trimmed) return;
-    if (!/^https?:\/\//i.test(trimmed) && !trimmed.startsWith('/')) {
-      Alert.alert('Link anh khong hop le', 'Vui long nhap link bat dau bang http(s):// hoac duong dan /uploads/...');
+    const urls = parseImageUrls(imageUrlInput);
+    if (urls.length === 0) return;
+
+    const invalid = urls.find((url) => !isValidImageUrl(url));
+    if (invalid) {
+      Alert.alert('Link anh khong hop le', 'Moi link phai bat dau bang http(s):// hoac duong dan /uploads/...');
       return;
     }
-    setSelectedImageUri(trimmed);
+
+    setSelectedImageUri(urls[0]);
     setSelectedImageSource('url');
   };
 
   const clearSelectedImage = () => {
+    setImageUrlInput('');
     setSelectedImageUri('');
     setSelectedImageSource(null);
   };
@@ -183,10 +208,10 @@ export default function SearchScreen() {
     setOrigin(product.origin || '');
     setDescription(product.description || '');
 
-    const currentImage = product.images?.[0] || '';
-    setImageUrlInput(currentImage);
-    setSelectedImageUri(currentImage);
-    setSelectedImageSource(currentImage ? 'url' : null);
+    const currentImages = (product.images ?? []).filter(Boolean);
+    setImageUrlInput(currentImages.join(', '));
+    setSelectedImageUri(currentImages[0] || '');
+    setSelectedImageSource(currentImages.length > 0 ? 'url' : null);
     setCreateModalVisible(true);
   };
 
@@ -204,8 +229,18 @@ export default function SearchScreen() {
       if (origin.trim()) form.append('origin', origin.trim());
       if (description.trim()) form.append('description', description.trim());
 
-      if (selectedImageUri && selectedImageSource === 'url') {
-        form.append('image_urls', selectedImageUri);
+      if (selectedImageSource === 'url') {
+        const parsedUrls = parseImageUrls(imageUrlInput);
+        const imageUrls = parsedUrls.length > 0 ? parsedUrls : selectedImageUri ? [selectedImageUri] : [];
+
+        const invalid = imageUrls.find((url) => !isValidImageUrl(url));
+        if (invalid) {
+          Alert.alert('Link anh khong hop le', 'Moi link phai bat dau bang http(s):// hoac duong dan /uploads/...');
+          setCreatingProduct(false);
+          return;
+        }
+
+        imageUrls.forEach((url) => form.append('image_urls', url));
       }
 
       if (selectedImageUri && selectedImageSource === 'file') {
@@ -261,26 +296,58 @@ export default function SearchScreen() {
     );
   };
 
+  const pauseProduct = async (product: SellerProduct) => {
+    if (!accessToken) return;
+    try {
+      await api.delete(`/products/${product.id}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      markPaused(product.id);
+      await fetchSellerProducts();
+      Alert.alert('Da tam dung', `San pham "${product.name}" da duoc tam dung ban.`);
+    } catch {
+      Alert.alert('That bai', 'Khong the tam dung san pham. Vui long thu lai.');
+    }
+  };
+
+  const deleteProductFromUi = async (product: SellerProduct) => {
+    if (!accessToken) return;
+    try {
+      await api.delete(`/products/${product.id}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      markDeleted(product.id);
+      setSellerProducts((prev) => prev.filter((item) => item.id !== product.id));
+      Alert.alert('Da xoa', `San pham "${product.name}" da duoc xoa khoi danh sach hien thi.`);
+    } catch {
+      Alert.alert('That bai', 'Khong the xoa san pham. Vui long thu lai.');
+    }
+  };
+
   const handleDeleteProduct = (product: SellerProduct) => {
     if (!accessToken) return;
 
-    Alert.alert('Xac nhan xoa san pham', `Ban co chac chan muon xoa "${product.name}"?`, [
-      { text: 'Huy', style: 'cancel' },
-      {
-        text: 'Xoa',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await api.delete(`/products/${product.id}`, {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            await fetchSellerProducts();
-          } catch {
-            Alert.alert('That bai', 'Khong the xoa san pham. Vui long thu lai.');
-          }
+    Alert.alert(
+      'Quan ly san pham',
+      `Ban muon thao tac gi voi "${product.name}"?`,
+      [
+        { text: 'Huy', style: 'cancel' },
+        {
+          text: 'Tam dung',
+          style: 'default',
+          onPress: () => {
+            void pauseProduct(product);
+          },
         },
-      },
-    ]);
+        {
+          text: 'Xoa san pham',
+          style: 'destructive',
+          onPress: () => {
+            void deleteProductFromUi(product);
+          },
+        },
+      ],
+    );
   };
 
   useFocusEffect(
@@ -344,16 +411,25 @@ export default function SearchScreen() {
 
   const sellerVisibleProducts = useMemo(() => {
     const normalizedKeyword = sellerKeyword.trim().toLowerCase();
+    const pausedSet = new Set(pausedProductIds);
+    const deletedSet = new Set(deletedProductIds);
 
-    const filtered = sellerProducts.filter((item) => {
+    const normalizedProducts = sellerProducts
+      .filter((item) => !deletedSet.has(item.id))
+      .map((item) => (pausedSet.has(item.id) ? { ...item, is_active: false } : item));
+
+      const filtered = normalizedProducts.filter((item) => {
+
       const matchesKeyword =
         !normalizedKeyword ||
         item.name?.toLowerCase().includes(normalizedKeyword) ||
         item.id?.toLowerCase().includes(normalizedKeyword);
 
       const stock = Number(item.stock || 0);
-      if (sellerFilter === 'ACTIVE') return matchesKeyword && stock > 0;
-      if (sellerFilter === 'OUT_OF_STOCK') return matchesKeyword && stock <= 0;
+      const isActive = item.is_active !== false;
+
+      if (sellerFilter === 'ACTIVE') return matchesKeyword && stock > 0 && isActive;
+      if (sellerFilter === 'OUT_OF_STOCK') return matchesKeyword && (stock <= 0 || !isActive);
       return matchesKeyword;
     });
 
@@ -367,7 +443,7 @@ export default function SearchScreen() {
     }
 
     return sorted;
-  }, [sellerProducts, sellerKeyword, sellerFilter, sellerSort]);
+  }, [sellerProducts, sellerKeyword, sellerFilter, sellerSort, pausedProductIds, deletedProductIds]);
 
   const cycleSort = () => {
     setSellerSort((current) => {
@@ -517,7 +593,7 @@ export default function SearchScreen() {
               {selectedImageSource ? (
                 <View className="mb-3 flex-row items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                   <Text className="text-xs text-slate-600">
-                    Nguon anh: <Text className="font-bold text-slate-800">{selectedImageSource === 'url' ? 'Tu link URL' : 'Tu thu vien/tep'}</Text>
+                    Nguon anh: <Text className="font-bold text-slate-800">{selectedImageSource === 'url' ? `Tu link URL (${parseImageUrls(imageUrlInput).length || 1} anh)` : 'Tu thu vien/tep'}</Text>
                   </Text>
                   <TouchableOpacity onPress={clearSelectedImage}>
                     <Text className="text-xs font-bold text-red-500">Bo anh</Text>
@@ -528,13 +604,13 @@ export default function SearchScreen() {
               <View className="flex-row gap-2 mb-3">
                 <TextInput
                   className="flex-1 border border-slate-200 rounded-xl px-3 py-3"
-                  placeholder="Dan link anh (https://...)"
+                  placeholder="Dan 1 hoac nhieu link, cach nhau bang dau phay"
                   value={imageUrlInput}
                   onChangeText={setImageUrlInput}
                   autoCapitalize="none"
                 />
                 <TouchableOpacity className="bg-slate-800 rounded-xl px-3 justify-center" onPress={applyImageUrl}>
-                  <Text className="text-white font-bold text-xs">Xem</Text>
+                  <Text className="text-white font-bold text-xs">Ap dung</Text>
                 </TouchableOpacity>
               </View>
 

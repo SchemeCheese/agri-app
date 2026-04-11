@@ -4,6 +4,7 @@ import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { TextInput } from 'react-native';
 import 'react-native-reanimated';
 
 import './globals.css';
@@ -12,6 +13,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const queryClient = new QueryClient();
 
 import { useColorScheme } from '@/components/useColorScheme';
+
+const TextInputAny = TextInput as any;
+
+if (!TextInputAny.defaultProps) {
+  TextInputAny.defaultProps = {};
+}
+
+TextInputAny.defaultProps.placeholderTextColor = '#64748B';
 
 export {
   // Catch any errors thrown by the Layout component.

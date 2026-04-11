@@ -7,22 +7,39 @@ import {
   getProducts,
   Product,
 } from '@/api/product';
+import { useProductModerationStore } from '@/store/productModerationStore';
 
 export const useProducts = () => {
+  const pausedProductIds = useProductModerationStore((state) => state.pausedProductIds);
+  const deletedProductIds = useProductModerationStore((state) => state.deletedProductIds);
+
   const productsQuery = useQuery({
     queryKey: ['products'],
     queryFn: getProducts,
   });
 
+  const products = useMemo(() => {
+    const pausedSet = new Set(pausedProductIds);
+    const deletedSet = new Set(deletedProductIds);
+
+    return (productsQuery.data ?? [])
+      .filter((product) => !deletedSet.has(product.id))
+      .map((product) =>
+        pausedSet.has(product.id)
+          ? { ...product, is_active: false }
+          : product,
+      );
+  }, [deletedProductIds, pausedProductIds, productsQuery.data]);
+
   const categories = useMemo(
-    () => buildCategoriesFromProducts(productsQuery.data ?? []),
-    [productsQuery.data],
+    () => buildCategoriesFromProducts(products),
+    [products],
   );
 
   return {
     ...productsQuery,
     categories,
-    products: productsQuery.data ?? [],
+    products,
   };
 };
 
