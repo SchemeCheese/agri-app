@@ -77,7 +77,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="chat"
         options={{
-          href: isSeller ? undefined : null,
           title: 'Chat',
           tabBarIcon: ({ color }) => <TabBarIcon name="comment-o" color={color} />,
         }}

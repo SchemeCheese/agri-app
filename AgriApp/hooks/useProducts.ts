@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import {
   buildCategoriesFromProducts,
+  getSellerById,
   getProductById,
   getProducts,
   Product,
@@ -84,5 +85,13 @@ export const useProductDetail = (id: string) => {
     queryKey: ['product', id],
     queryFn: () => getProductById(id),
     enabled: Boolean(id),
+  });
+};
+
+export const useSellerDetail = (sellerId: string) => {
+  return useQuery({
+    queryKey: ['seller', sellerId],
+    queryFn: () => getSellerById(sellerId),
+    enabled: Boolean(sellerId),
   });
 };

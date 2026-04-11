@@ -182,7 +182,7 @@ export default function ProductDetailScreen() {
 
     setStartingNegotiation(true);
     try {
-      await initiateChat(accessToken, {
+      const conversation = await initiateChat(accessToken, {
         partnerId: product.seller_id,
         productId: product.id,
       });
@@ -197,6 +197,17 @@ export default function ProductDetailScreen() {
       Alert.alert(
         'Da gui de xuat',
         `Da gui thuong luong ${parsedQty} ${product.unit ?? 'sp'} voi gia ${formatPrice(parsedPrice)}/${product.unit ?? 'sp'}.`,
+        [
+          {
+            text: 'Vao chat',
+            onPress: () =>
+              router.push({
+                pathname: '/(tabs)/chat',
+                params: { conversationId: conversation.conversationId },
+              }),
+          },
+          { text: 'Dong' },
+        ],
       );
     } catch (error) {
       Alert.alert('Thuong luong that bai', extractErrorMessage(error, 'Khong the tao yeu cau thuong luong.'));
@@ -222,10 +233,20 @@ export default function ProductDetailScreen() {
         partnerId: product.seller_id,
         productId: product.id,
       });
-      Alert.alert('Da tao cuoc tro chuyen', `Ma cuoc tro chuyen: ${conversation.conversationId.slice(-8).toUpperCase()}`);
+      router.push({ pathname: '/(tabs)/chat', params: { conversationId: conversation.conversationId } });
     } catch (error) {
       Alert.alert('Khong the bat dau chat', extractErrorMessage(error, 'Vui long thu lai.'));
     }
+  };
+
+  const handleOpenShop = () => {
+    const shopId = product?.shop?.id ?? product?.seller_id;
+    if (!shopId) {
+      Alert.alert('Khong the mo shop', 'Khong tim thay thong tin shop.');
+      return;
+    }
+
+    router.push({ pathname: '/shop/[id]', params: { id: shopId } });
   };
 
   return (
@@ -320,7 +341,7 @@ export default function ProductDetailScreen() {
                 ) : null}
               </View>
 
-              <View className="mt-4 bg-white rounded-[28px] border border-slate-100 p-4">
+              <TouchableOpacity className="mt-4 bg-white rounded-[28px] border border-slate-100 p-4" onPress={handleOpenShop} activeOpacity={0.9}>
                 <Text className="text-base font-bold text-slate-900">{product.shop?.store_name ?? product.shopName ?? 'Nong trai Agri'}</Text>
                 <Text className="text-xs text-slate-500 mt-1">{product.shop?.location ?? 'TP. Da Lat, Lam Dong'}</Text>
 
@@ -338,7 +359,21 @@ export default function ProductDetailScreen() {
                     <Text className="text-slate-900 font-extrabold">1 nam truoc</Text>
                   </View>
                 </View>
-              </View>
+                <View className="mt-3 flex-row gap-2">
+                  <TouchableOpacity
+                    className="flex-1 rounded-xl border border-teal-600 py-2.5 items-center"
+                    onPress={() => void handleStartChat()}
+                  >
+                    <Text className="text-teal-700 font-bold">Chat voi nguoi ban</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="flex-1 rounded-xl border border-slate-300 py-2.5 items-center"
+                    onPress={handleOpenShop}
+                  >
+                    <Text className="text-slate-700 font-bold">Xem shop</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
 
               <View className="mt-4 bg-white rounded-[28px] border border-slate-100 p-4">
                 <SectionTitle title="Chi tiet san pham" />

@@ -33,6 +33,31 @@ export type CategorySummary = {
   count: number;
 };
 
+export type SellerDetail = {
+  id: string;
+  full_name?: string;
+  averageRating?: number;
+  totalSold?: number;
+  shop?: {
+    name?: string;
+    store_name?: string;
+    avatar?: string | null;
+    avatar_url?: string | null;
+    location?: string;
+    store_address?: string;
+    address?: string;
+    description?: string;
+    store_description?: string;
+    isVerified?: boolean;
+    rating?: number;
+    reviewCount?: number;
+    totalSold?: number;
+    totalProducts?: number;
+    joinDate?: string;
+  };
+  products?: Product[];
+};
+
 export const getProducts = async (): Promise<Product[]> => {
   const { data } = await api.get<Product[]>('/products');
   return data;
@@ -40,6 +65,11 @@ export const getProducts = async (): Promise<Product[]> => {
 
 export const getProductById = async (id: string): Promise<Product> => {
   const { data } = await api.get<Product>(`/products/${id}`);
+  return data;
+};
+
+export const getSellerById = async (id: string): Promise<SellerDetail> => {
+  const { data } = await api.get<SellerDetail>(`/products/sellers/${id}`);
   return data;
 };
 
