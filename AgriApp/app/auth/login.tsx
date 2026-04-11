@@ -59,12 +59,12 @@ export default function LoginScreen() {
         accessToken: response.data.access_token,
       });
 
-      if (params.returnTo) {
-        router.replace({ pathname: params.returnTo, params: params.ids ? { ids: params.ids } : undefined });
+      if (params.returnTo === '/checkout') {
+        router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
         return;
       }
 
-      router.replace('/(tabs)/profile');
+      router.replace('/profile');
     } catch (error: any) {
       const message = error?.response?.data?.message ?? 'Đăng nhập thất bại. Vui lòng thử lại.';
       setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
