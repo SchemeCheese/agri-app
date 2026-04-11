@@ -44,6 +44,13 @@ type ProductFormMode = 'create' | 'edit';
 type SellerFilter = 'ALL' | 'ACTIVE' | 'OUT_OF_STOCK';
 type SellerSort = 'NEWEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'SOLD_DESC';
 
+type ShopSearchResult = {
+  id: string;
+  name: string;
+  avatar?: string | null;
+  matchedProductCount: number;
+};
+
 export default function SearchScreen() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -289,6 +296,39 @@ export default function SearchScreen() {
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
       .trim();
+
+  const normalizedKeyword = normalizeText(keyword);
+
+  const visibleShops = useMemo<ShopSearchResult[]>(() => {
+    if (!normalizedKeyword) return [];
+
+    const groups = new Map<string, ShopSearchResult>();
+
+    products.forEach((product) => {
+      const matchCategory =
+        !selectedCategory || selectedCategory === 'Tất cả'
+          ? true
+          : product.category === selectedCategory;
+      if (!matchCategory) return;
+
+      const shopId = product.shop?.id ?? product.seller_id;
+      const shopName = product.shop?.store_name ?? product.shopName ?? '';
+      if (!shopId || !shopName) return;
+
+      const isShopMatch = normalizeText(shopName).includes(normalizedKeyword);
+      if (!isShopMatch) return;
+
+      const current = groups.get(shopId);
+      groups.set(shopId, {
+        id: shopId,
+        name: shopName,
+        avatar: product.shop?.avatar_url ?? current?.avatar ?? null,
+        matchedProductCount: (current?.matchedProductCount ?? 0) + 1,
+      });
+    });
+
+    return Array.from(groups.values()).sort((a, b) => b.matchedProductCount - a.matchedProductCount);
+  }, [products, normalizedKeyword, selectedCategory]);
 
   const visibleProducts = useMemo(() => {
     return filteredProducts.filter((product) => {
@@ -545,7 +585,7 @@ export default function SearchScreen() {
     setSelectedOrigins([]);
   };
 
-  const ProductHeader = () => (
+  const listHeader = (
     <View className="pb-4">
       <View className="px-4 pt-3">
         <ImageBackground
@@ -595,9 +635,54 @@ export default function SearchScreen() {
 
       <View className="px-4 mt-4">
         <Text className="text-base text-slate-600">
-          Tìm thấy <Text className="font-bold text-[#15803D]">{visibleProducts.length}</Text> sản phẩm
+          {visibleShops.length > 0 ? (
+            <>
+              Tìm thấy <Text className="font-bold text-[#15803D]">{visibleShops.length}</Text> shop và{' '}
+              <Text className="font-bold text-[#15803D]">{visibleProducts.length}</Text> sản phẩm
+            </>
+          ) : (
+            <>
+              Tìm thấy <Text className="font-bold text-[#15803D]">{visibleProducts.length}</Text> sản phẩm
+            </>
+          )}
         </Text>
       </View>
+
+      {visibleShops.length > 0 ? (
+        <View className="mt-4 mb-1">
+          <SectionHeader title="Shop" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+            <View className="flex-row gap-3">
+              {visibleShops.map((shop) => (
+                <TouchableOpacity
+                  key={shop.id}
+                  className="w-52 bg-white border border-slate-200 rounded-2xl px-3 py-3"
+                  onPress={() => setKeyword(shop.name)}
+                  activeOpacity={0.9}
+                >
+                  <View className="flex-row items-center">
+                    <View className="w-11 h-11 rounded-full bg-emerald-50 border border-emerald-100 overflow-hidden items-center justify-center">
+                      {shop.avatar ? (
+                        <Image source={{ uri: resolveImageUrl(shop.avatar) }} className="w-full h-full" />
+                      ) : (
+                        <FontAwesome name="building-o" size={16} color="#059669" />
+                      )}
+                    </View>
+                    <View className="ml-3 flex-1">
+                      <Text className="text-slate-900 font-bold" numberOfLines={1}>
+                        {shop.name}
+                      </Text>
+                      <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>
+                        {shop.matchedProductCount} sản phẩm phù hợp
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -607,9 +692,11 @@ export default function SearchScreen() {
         data={visibleProducts}
         keyExtractor={(item) => item.id}
         numColumns={2}
+        keyboardShouldPersistTaps="always"
+        keyboardDismissMode="none"
         columnWrapperStyle={{ justifyContent: 'space-between', paddingHorizontal: 16 }}
         contentContainerStyle={{ paddingBottom: 18 }}
-        ListHeaderComponent={<ProductHeader />}
+        ListHeaderComponent={listHeader}
         ListFooterComponent={<HomeFooterCard />}
         ListEmptyComponent={
           isLoading ? (

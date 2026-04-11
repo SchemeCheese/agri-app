@@ -31,15 +31,26 @@ export const useProductSearch = (
   keyword: string,
   selectedCategory?: string,
 ) => {
-  const normalizedKeyword = keyword.trim().toLowerCase();
+  const normalizeText = (value?: string) =>
+    (value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const normalizedKeyword = normalizeText(keyword);
 
   return useMemo(() => {
     return products.filter((product) => {
+      const productName = normalizeText(product.name);
+      const origin = normalizeText(product.origin);
+      const shopName = normalizeText(product.shopName ?? product.shop?.store_name);
+
       const matchKeyword =
         normalizedKeyword.length === 0 ||
-        product.name.toLowerCase().includes(normalizedKeyword) ||
-        product.origin?.toLowerCase().includes(normalizedKeyword) ||
-        product.shopName?.toLowerCase().includes(normalizedKeyword);
+        productName.includes(normalizedKeyword) ||
+        origin.includes(normalizedKeyword) ||
+        shopName.includes(normalizedKeyword);
 
       const matchCategory =
         !selectedCategory || selectedCategory === 'Tất cả'

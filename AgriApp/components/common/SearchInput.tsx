@@ -1,5 +1,5 @@
 import { FontAwesome } from '@expo/vector-icons';
-import { View, TextInput } from 'react-native';
+import { Keyboard, View, TextInput } from 'react-native';
 
 type SearchInputProps = {
   value: string;
@@ -16,6 +16,9 @@ export const SearchInput = ({ value, onChangeText, placeholder }: SearchInputPro
         onChangeText={onChangeText}
         placeholder={placeholder ?? 'Tim nong san...'}
         className="flex-1 ml-3 text-slate-700"
+        returnKeyType="search"
+        blurOnSubmit={false}
+        onSubmitEditing={() => Keyboard.dismiss()}
       />
     </View>
   );

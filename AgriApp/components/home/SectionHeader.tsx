@@ -7,12 +7,11 @@ type SectionHeaderProps = {
   onPressAction?: () => void;
 };
 
-export const SectionHeader = ({ title, subtitle, actionLabel, onPressAction }: SectionHeaderProps) => {
+export const SectionHeader = ({ title, actionLabel, onPressAction }: SectionHeaderProps) => {
   return (
     <View className="flex-row items-end justify-between px-4 mb-3">
       <View className="flex-1 pr-3">
         <Text className="text-[18px] font-bold text-slate-900">{title}</Text>
-        {subtitle ? <Text className="text-xs text-slate-500 mt-1">{subtitle}</Text> : null}
       </View>
       {actionLabel && onPressAction ? (
         <TouchableOpacity onPress={onPressAction}>

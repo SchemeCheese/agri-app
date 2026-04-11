@@ -2,8 +2,6 @@ import React from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthStore } from '@/store/authStore';
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
@@ -11,11 +9,10 @@ function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>['name'];
   color: string;
 }) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+  return <FontAwesome size={20} style={{ marginBottom: -1 }} {...props} />;
 }
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const user = useAuthStore((state) => state.user);
   const isSeller = user?.role === 'SELLER';
 
@@ -23,14 +20,28 @@ export default function TabLayout() {
     <Tabs
       initialRouteName={isSeller ? 'index' : 'index'}
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: '#FFFFFF',
         tabBarInactiveTintColor: '#94A3B8',
+        tabBarActiveBackgroundColor: '#0F172A',
+        tabBarInactiveBackgroundColor: 'transparent',
         tabBarStyle: {
           height: 70,
           paddingBottom: 10,
           paddingTop: 10,
+          paddingHorizontal: 8,
           borderTopColor: '#E2E8F0',
           backgroundColor: '#FFFFFF',
+        },
+        tabBarItemStyle: {
+          borderRadius: 18,
+          marginHorizontal: 4,
+          marginVertical: 6,
+          overflow: 'hidden',
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '700',
+          marginTop: 2,
         },
         headerShown: false,
       }}>

@@ -1,5 +1,6 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { Image, Text, TouchableOpacity, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import { Product } from '@/api/product';
 import { formatPrice } from '@/utils/format';
@@ -10,19 +11,21 @@ type HomeProductCardProps = {
   onPress: () => void;
   onAddToCart: () => void;
   compact?: boolean;
+  style?: StyleProp<ViewStyle>;
 };
 
-export const HomeProductCard = ({ product, onPress, onAddToCart, compact = false }: HomeProductCardProps) => {
-  const widthClass = compact ? 'w-[82%]' : 'w-full';
+export const HomeProductCard = ({ product, onPress, onAddToCart, compact = false, style }: HomeProductCardProps) => {
+  const widthClass = compact ? '' : 'w-full';
 
   return (
     <TouchableOpacity
-      className={`${widthClass} bg-white rounded-[28px] mb-4 border border-slate-100 overflow-hidden shadow-sm shadow-slate-200/50`}
+      className={`${widthClass} bg-white rounded-[24px] mb-4 border border-slate-100 overflow-hidden shadow-sm shadow-slate-200/50`}
       onPress={onPress}
       activeOpacity={0.9}
+      style={style}
     >
       <View className="relative">
-        <Image source={{ uri: resolveImageUrl(product.images?.[0]) }} className={compact ? 'w-full h-44' : 'w-full h-48'} />
+        <Image source={{ uri: resolveImageUrl(product.images?.[0]) }} className={compact ? 'w-full h-32' : 'w-full h-48'} />
         <View className="absolute top-3 left-3 bg-black/50 px-2.5 py-1 rounded-full">
           <Text className="text-white text-[10px] font-semibold" numberOfLines={1}>
             {product.shop?.store_name ?? product.shopName ?? 'Agri Shop'}
@@ -30,8 +33,8 @@ export const HomeProductCard = ({ product, onPress, onAddToCart, compact = false
         </View>
       </View>
 
-      <View className="p-4">
-        <Text className="text-base font-bold text-slate-900" numberOfLines={1}>
+      <View className={compact ? 'p-3' : 'p-4'}>
+        <Text className="text-base font-bold text-slate-900" numberOfLines={compact ? 2 : 1}>
           {product.name}
         </Text>
         <Text className="text-[12px] text-slate-500 mt-1" numberOfLines={1}>
