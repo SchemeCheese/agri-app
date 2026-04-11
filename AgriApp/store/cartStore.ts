@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { Alert, Platform, ToastAndroid } from 'react-native';
 import storage from './storage';
 
 import { Product } from '@/api/product';
@@ -11,7 +12,7 @@ type CartItem = {
 
 type CartState = {
   items: Record<string, CartItem>;
-  addItem: (product: Product, quantity?: number) => void;
+  addItem: (product: Product, quantity?: number, options?: { silent?: boolean }) => void;
   increaseItem: (productId: string) => void;
   decreaseItem: (productId: string) => void;
   removeItem: (productId: string) => void;
@@ -23,8 +24,9 @@ export const useCartStore = create<CartState>()(
   persist(
     (set) => ({
       items: {},
-      addItem: (product, quantity = 1) => {
+      addItem: (product, quantity = 1, options) => {
         const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
+        const message = `Da them ${product.name} (${safeQuantity} ${product.unit ?? 'sp'}) vao gio hang`;
 
         set((state) => {
           const current = state.items[product.id];
@@ -38,6 +40,15 @@ export const useCartStore = create<CartState>()(
             },
           };
         });
+
+        if (options?.silent) return;
+
+        if (Platform.OS === 'android') {
+          ToastAndroid.show(message, ToastAndroid.SHORT);
+          return;
+        }
+
+        Alert.alert('Thong bao', message);
       },
       increaseItem: (productId) => {
         set((state) => {

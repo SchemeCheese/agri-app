@@ -1,8 +1,10 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AxiosError } from 'axios';
 
+import { initiateChat } from '@/api/chat';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingState } from '@/components/common/LoadingState';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
@@ -12,6 +14,8 @@ import { ProductSummary } from '@/components/product/ProductSummary';
 import { ProductTabs } from '@/components/product/ProductTabs';
 import { ProductInfoTab } from '@/components/product/ProductInfoTab';
 import { useProductDetail, useProducts } from '@/hooks/useProducts';
+import { startNegotiation } from '@/services/chatSocket';
+import { useAuthStore } from '@/store/authStore';
 import { useCartStore } from '@/store/cartStore';
 import { formatPrice } from '@/utils/format';
 import { resolveImageUrl } from '@/utils/image';
@@ -76,9 +80,14 @@ export default function ProductDetailScreen() {
   const productId = params.id ?? '';
   const [quantity, setQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState('Chi tiết');
+  const [negotiationModalVisible, setNegotiationModalVisible] = useState(false);
+  const [negotiationQuantity, setNegotiationQuantity] = useState('');
+  const [negotiationPrice, setNegotiationPrice] = useState('');
+  const [startingNegotiation, setStartingNegotiation] = useState(false);
 
   const { data: product, isLoading, isError } = useProductDetail(productId);
   const { products } = useProducts();
+  const accessToken = useAuthStore((state) => state.accessToken);
   const addItem = useCartStore((state) => state.addItem);
 
   const sameShopProducts = useMemo(() => {
@@ -101,10 +110,20 @@ export default function ProductDetailScreen() {
 
   const isUnavailable = (product?.is_active === false) || (product?.stock ?? 0) <= 0;
 
+  const extractErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof AxiosError) {
+      const serverMessage = (error.response?.data as { message?: string | string[] } | undefined)?.message;
+      if (Array.isArray(serverMessage)) return serverMessage[0] ?? fallback;
+      if (typeof serverMessage === 'string' && serverMessage.trim()) return serverMessage;
+    }
+
+    if (error instanceof Error && error.message) return error.message;
+    return fallback;
+  };
+
   const handleAddToCart = () => {
     if (!product) return;
     addItem(product, quantity);
-    Alert.alert('Thanh cong', `Da them ${quantity} ${product.unit ?? 'sp'} vao gio hang.`);
   };
 
   const handleBuyNow = () => {
@@ -113,8 +132,100 @@ export default function ProductDetailScreen() {
     router.push('/(tabs)/cart');
   };
 
-  const handleChatOrNegotiate = () => {
-    Alert.alert('Thong bao', 'Tinh nang chat/thuong luong se duoc ket noi o buoc tiep theo.');
+  const handleOpenNegotiationModal = () => {
+    if (!product) return;
+    if (!accessToken) {
+      router.push({ pathname: '/auth/login', params: { returnTo: `/product/${product.id}` } });
+      return;
+    }
+
+    if (!product.min_negotiation_qty) {
+      Alert.alert('Khong ho tro', 'San pham nay khong ho tro thuong luong gia.');
+      return;
+    }
+
+    const minQty = Math.max(1, Number(product.min_negotiation_qty || 1));
+    const defaultQty = Math.max(quantity, minQty);
+    const defaultPrice = Math.max(1, Math.round((product.price || 0) * 0.9));
+
+    setNegotiationQuantity(String(defaultQty));
+    setNegotiationPrice(String(defaultPrice));
+    setNegotiationModalVisible(true);
+  };
+
+  const handleStartNegotiation = async () => {
+    if (!product || !accessToken) return;
+
+    const parsedQty = Number(negotiationQuantity);
+    const parsedPrice = Number(negotiationPrice);
+    const minQty = Number(product.min_negotiation_qty || 0);
+
+    if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+      Alert.alert('Du lieu khong hop le', 'So luong thuong luong phai lon hon 0.');
+      return;
+    }
+
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      Alert.alert('Du lieu khong hop le', 'Gia de xuat phai lon hon 0.');
+      return;
+    }
+
+    if (minQty > 0 && parsedQty < minQty) {
+      Alert.alert('Chua dat dieu kien', `Ban can mua toi thieu ${minQty} ${product.unit ?? 'sp'} de thuong luong.`);
+      return;
+    }
+
+    if (!product.seller_id) {
+      Alert.alert('Khong the thuong luong', 'Khong tim thay thong tin nguoi ban.');
+      return;
+    }
+
+    setStartingNegotiation(true);
+    try {
+      await initiateChat(accessToken, {
+        partnerId: product.seller_id,
+        productId: product.id,
+      });
+
+      await startNegotiation(accessToken, {
+        productId: product.id,
+        quantity: parsedQty,
+        proposedPrice: parsedPrice,
+      });
+
+      setNegotiationModalVisible(false);
+      Alert.alert(
+        'Da gui de xuat',
+        `Da gui thuong luong ${parsedQty} ${product.unit ?? 'sp'} voi gia ${formatPrice(parsedPrice)}/${product.unit ?? 'sp'}.`,
+      );
+    } catch (error) {
+      Alert.alert('Thuong luong that bai', extractErrorMessage(error, 'Khong the tao yeu cau thuong luong.'));
+    } finally {
+      setStartingNegotiation(false);
+    }
+  };
+
+  const handleStartChat = async () => {
+    if (!product) return;
+    if (!accessToken) {
+      router.push({ pathname: '/auth/login', params: { returnTo: `/product/${product.id}` } });
+      return;
+    }
+
+    if (!product.seller_id) {
+      Alert.alert('Khong the bat dau chat', 'Khong tim thay thong tin nguoi ban.');
+      return;
+    }
+
+    try {
+      const conversation = await initiateChat(accessToken, {
+        partnerId: product.seller_id,
+        productId: product.id,
+      });
+      Alert.alert('Da tao cuoc tro chuyen', `Ma cuoc tro chuyen: ${conversation.conversationId.slice(-8).toUpperCase()}`);
+    } catch (error) {
+      Alert.alert('Khong the bat dau chat', extractErrorMessage(error, 'Vui long thu lai.'));
+    }
   };
 
   return (
@@ -192,13 +303,13 @@ export default function ProductDetailScreen() {
                 <View className="mt-2 flex-row gap-2">
                   <TouchableOpacity
                     className="flex-1 border border-orange-500 rounded-xl py-3 items-center"
-                    onPress={handleChatOrNegotiate}
+                    onPress={handleOpenNegotiationModal}
                   >
                     <Text className="text-orange-600 font-bold">Thuong luong</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     className="flex-1 border border-teal-600 rounded-xl py-3 items-center"
-                    onPress={handleChatOrNegotiate}
+                    onPress={() => void handleStartChat()}
                   >
                     <Text className="text-teal-700 font-bold">Chat ngay</Text>
                   </TouchableOpacity>
@@ -316,6 +427,60 @@ export default function ProductDetailScreen() {
               <Text className="text-white font-bold text-base">Them vao gio hang</Text>
             </TouchableOpacity>
           </View>
+
+          <Modal
+            visible={negotiationModalVisible}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setNegotiationModalVisible(false)}
+          >
+            <TouchableOpacity
+              className="flex-1 bg-black/45 justify-end"
+              activeOpacity={1}
+              onPress={() => setNegotiationModalVisible(false)}
+            >
+              <TouchableOpacity className="bg-white rounded-t-3xl p-4 pb-8" activeOpacity={1} onPress={() => {}}>
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-lg font-black text-slate-900">Thuong luong gia</Text>
+                  <TouchableOpacity onPress={() => setNegotiationModalVisible(false)}>
+                    <FontAwesome name="close" size={18} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                <View className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-3">
+                  <Text className="text-slate-900 font-bold" numberOfLines={1}>{product.name}</Text>
+                  <Text className="text-xs text-slate-500 mt-1">Gia niem yet: {formatPrice(product.price)}/{product.unit ?? 'sp'}</Text>
+                  <Text className="text-xs text-slate-500 mt-1">Toi thieu thuong luong: {Number(product.min_negotiation_qty || 0)} {product.unit ?? 'sp'}</Text>
+                </View>
+
+                <Text className="text-xs font-semibold text-slate-600 mb-1">So luong mua</Text>
+                <TextInput
+                  className="border border-slate-200 rounded-xl px-3 py-3 mb-3"
+                  keyboardType="numeric"
+                  value={negotiationQuantity}
+                  onChangeText={setNegotiationQuantity}
+                  placeholder="Nhap so luong"
+                />
+
+                <Text className="text-xs font-semibold text-slate-600 mb-1">Gia de xuat /{product.unit ?? 'sp'}</Text>
+                <TextInput
+                  className="border border-slate-200 rounded-xl px-3 py-3 mb-4"
+                  keyboardType="numeric"
+                  value={negotiationPrice}
+                  onChangeText={setNegotiationPrice}
+                  placeholder="Nhap gia de xuat"
+                />
+
+                <TouchableOpacity
+                  className={`rounded-xl py-3 items-center ${startingNegotiation ? 'bg-slate-300' : 'bg-orange-500'}`}
+                  onPress={() => void handleStartNegotiation()}
+                  disabled={startingNegotiation}
+                >
+                  <Text className="text-white font-bold">{startingNegotiation ? 'Dang gui...' : 'Gui de xuat thuong luong'}</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
         </>
       ) : null}
     </ScreenContainer>

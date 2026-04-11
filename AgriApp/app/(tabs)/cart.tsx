@@ -1,7 +1,7 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api from '@/api/client';
@@ -38,7 +38,9 @@ type SellerOrder = {
   }[];
 };
 
-const SELLER_STATUS_FILTERS: Array<{ key: 'ALL' | 'PENDING' | 'CONFIRMED' | 'SHIPPING' | 'COMPLETED' | 'ISSUE_REPORTED' | 'CANCELLED' | 'FAILED'; label: string }> = [
+type SellerStatusKey = 'ALL' | 'PENDING' | 'CONFIRMED' | 'SHIPPING' | 'COMPLETED' | 'ISSUE_REPORTED' | 'CANCELLED' | 'FAILED';
+
+const SELLER_STATUS_FILTERS: Array<{ key: SellerStatusKey; label: string }> = [
   { key: 'ALL', label: 'Tat ca' },
   { key: 'PENDING', label: 'Cho xac nhan' },
   { key: 'CONFIRMED', label: 'Cho van chuyen' },
@@ -48,6 +50,17 @@ const SELLER_STATUS_FILTERS: Array<{ key: 'ALL' | 'PENDING' | 'CONFIRMED' | 'SHI
   { key: 'CANCELLED', label: 'Da huy' },
   { key: 'FAILED', label: 'That lac' },
 ];
+
+const getSellerStatusStyle = (status: SellerStatusKey) => {
+  if (status === 'ALL') return { icon: 'th-large', bg: 'bg-slate-100', border: 'border-slate-200', iconBg: 'bg-slate-200', iconColor: '#334155', text: 'text-slate-700' } as const;
+  if (status === 'PENDING') return { icon: 'clock-o', bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-100', iconColor: '#B45309', text: 'text-amber-700' } as const;
+  if (status === 'CONFIRMED') return { icon: 'check-circle-o', bg: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-blue-100', iconColor: '#1D4ED8', text: 'text-blue-700' } as const;
+  if (status === 'SHIPPING') return { icon: 'truck', bg: 'bg-violet-50', border: 'border-violet-200', iconBg: 'bg-violet-100', iconColor: '#6D28D9', text: 'text-violet-700' } as const;
+  if (status === 'COMPLETED') return { icon: 'check-circle', bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-100', iconColor: '#047857', text: 'text-emerald-700' } as const;
+  if (status === 'ISSUE_REPORTED') return { icon: 'warning', bg: 'bg-orange-50', border: 'border-orange-200', iconBg: 'bg-orange-100', iconColor: '#C2410C', text: 'text-orange-700' } as const;
+  if (status === 'CANCELLED') return { icon: 'ban', bg: 'bg-rose-50', border: 'border-rose-200', iconBg: 'bg-rose-100', iconColor: '#BE123C', text: 'text-rose-700' } as const;
+  return { icon: 'times-circle-o', bg: 'bg-slate-100', border: 'border-slate-200', iconBg: 'bg-slate-200', iconColor: '#334155', text: 'text-slate-700' } as const;
+};
 
 const getStatusText = (status: string) => {
   if (status === 'PENDING') return 'Cho xac nhan';
@@ -83,7 +96,7 @@ export default function CartScreen() {
   const [sellerOrders, setSellerOrders] = useState<SellerOrder[]>([]);
   const [loadingSellerOrders, setLoadingSellerOrders] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
-  const [selectedSellerStatus, setSelectedSellerStatus] = useState<(typeof SELLER_STATUS_FILTERS)[number]['key']>('ALL');
+  const [selectedSellerStatus, setSelectedSellerStatus] = useState<SellerStatusKey>('ALL');
   const [selectedSellerOrder, setSelectedSellerOrder] = useState<SellerOrder | null>(null);
   const cartIdKey = useMemo(
     () => cartItems.map((item) => item.product.id).sort().join('|'),
@@ -266,30 +279,42 @@ export default function CartScreen() {
           <Text className="text-sm text-slate-500 mt-1">Quan ly va xu ly don hang cua shop</Text>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="px-4 py-3 bg-white border-b border-slate-100"
-          contentContainerStyle={{ paddingRight: 16 }}
-        >
-          {SELLER_STATUS_FILTERS.map((item) => {
-            const active = selectedSellerStatus === item.key;
-            const count = sellerOrderCounts[item.key] || 0;
+        <View className="bg-white border-b border-slate-100 pb-3">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="px-4 pt-3"
+            contentContainerStyle={{ paddingRight: 16 }}
+          >
+            {SELLER_STATUS_FILTERS.map((item) => {
+              const active = selectedSellerStatus === item.key;
+              const count = sellerOrderCounts[item.key] || 0;
+              const style = getSellerStatusStyle(item.key);
 
-            return (
-              <TouchableOpacity
-                key={item.key}
-                className={`mr-2 rounded-2xl px-4 py-2 flex-row items-center border ${active ? 'bg-emerald-600 border-emerald-600' : 'bg-slate-50 border-slate-200'}`}
-                onPress={() => setSelectedSellerStatus(item.key)}
-              >
-                <Text className={`font-bold ${active ? 'text-white' : 'text-slate-700'}`}>{item.label}</Text>
-                <View className={`ml-2 rounded-full px-2 py-0.5 ${active ? 'bg-white/20' : 'bg-slate-200'}`}>
-                  <Text className={`text-xs font-bold ${active ? 'text-white' : 'text-slate-700'}`}>{count}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  className={`mr-3 w-36 rounded-2xl border px-3 py-2.5 ${active ? 'bg-slate-900 border-slate-900' : `${style.bg} ${style.border}`}`}
+                  onPress={() => setSelectedSellerStatus(item.key)}
+                  activeOpacity={0.88}
+                >
+                  <View className="flex-row items-center justify-between">
+                    <View className={`w-7 h-7 rounded-lg items-center justify-center ${active ? 'bg-white/20' : style.iconBg}`}>
+                      <FontAwesome name={style.icon} size={13} color={active ? '#FFFFFF' : style.iconColor} />
+                    </View>
+                    <View className={`px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-white/80'}`}>
+                      <Text className={`text-xs font-black ${active ? 'text-white' : style.text}`}>{count}</Text>
+                    </View>
+                  </View>
+
+                  <Text className={`mt-2 text-xs font-bold ${active ? 'text-white' : style.text}`} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
         <ScrollView className="flex-1 px-4 pt-3" showsVerticalScrollIndicator={false}>
           {loadingSellerOrders ? (
