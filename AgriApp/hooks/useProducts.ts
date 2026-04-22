@@ -8,6 +8,7 @@ import {
   getProducts,
   Product,
 } from '@/api/product';
+import { getShopVouchers } from '@/api/voucher';
 import { useProductModerationStore } from '@/store/productModerationStore';
 
 export const useProducts = () => {
@@ -93,5 +94,13 @@ export const useSellerDetail = (sellerId: string) => {
     queryKey: ['seller', sellerId],
     queryFn: () => getSellerById(sellerId),
     enabled: Boolean(sellerId),
+  });
+};
+
+export const useShopVouchers = (sellerId: string, accessToken?: string | null) => {
+  return useQuery({
+    queryKey: ['shop-vouchers', sellerId],
+    queryFn: () => getShopVouchers(accessToken as string, sellerId),
+    enabled: Boolean(sellerId && accessToken),
   });
 };

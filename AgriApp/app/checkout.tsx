@@ -199,6 +199,48 @@ export default function CheckoutScreen() {
     }
   };
 
+  const applySavedVoucher = async (shopId: string, code: string) => {
+    if (!user || !accessToken) {
+      router.replace({ pathname: '/auth/login', params: { returnTo: '/checkout', ids: ids.join(',') } });
+      return;
+    }
+
+    const normalizedCode = code.trim().toUpperCase();
+    updateVoucherState(shopId, (prev) => ({ ...prev, loading: true, error: '', inputCode: normalizedCode }));
+
+    try {
+      const response = await api.post(
+        '/vouchers/validate',
+        {
+          code: normalizedCode,
+          seller_id: shopId,
+          order_total: subtotalByShop[shopId] ?? 0,
+        },
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+
+      updateVoucherState(shopId, (prev) => ({
+        ...prev,
+        loading: false,
+        code: normalizedCode,
+        inputCode: normalizedCode,
+        discountAmount: response.data?.discount_amount ?? 0,
+        error: '',
+      }));
+    } catch (error: any) {
+      const message = error?.response?.data?.message ?? 'Ma khong hop le hoac da het han.';
+      updateVoucherState(shopId, (prev) => ({
+        ...prev,
+        loading: false,
+        error: Array.isArray(message) ? message.join(', ') : String(message),
+        code: '',
+        discountAmount: 0,
+      }));
+    }
+  };
+
   const removeVoucher = (shopId: string) => {
     setVoucherByShop((prev) => ({
       ...prev,
@@ -471,15 +513,21 @@ export default function CheckoutScreen() {
                         <View className="flex-row gap-2">
                           {availableShopVouchers.map((sv) => {
                             const code = sv.voucher?.code ?? '';
+                            const isApplied = voucherState.code === code;
                             return (
                               <TouchableOpacity
                                 key={`${shopId}-${code}`}
-                                className="px-3 py-2 rounded-lg border border-orange-200 bg-orange-50"
-                                onPress={() =>
-                                  updateVoucherState(shopId, (prev) => ({ ...prev, inputCode: code, error: '' }))
-                                }
+                                className={`px-3 py-2 rounded-lg border ${
+                                  isApplied
+                                    ? 'border-green-400 bg-green-50'
+                                    : 'border-orange-200 bg-orange-50'
+                                }`}
+                                onPress={() => void applySavedVoucher(shopId, code)}
+                                disabled={voucherState.loading}
                               >
-                                <Text className="text-xs font-bold text-orange-600">{code}</Text>
+                                <Text className={`text-xs font-bold ${isApplied ? 'text-green-600' : 'text-orange-600'}`}>
+                                  {code}
+                                </Text>
                               </TouchableOpacity>
                             );
                           })}
