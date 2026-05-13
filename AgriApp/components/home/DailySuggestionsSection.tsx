@@ -8,12 +8,16 @@ type DailySuggestionsSectionProps = {
   products: Product[];
   onPressProduct: (productId: string) => void;
   onAddToCart: (product: Product) => void;
+  title?: string;
+  subtitle?: string;
 };
 
 export const DailySuggestionsSection = ({
   products,
   onPressProduct,
   onAddToCart,
+  title = 'Goi y hom nay',
+  subtitle = 'San pham duoc chon ngau nhien tu BE',
 }: DailySuggestionsSectionProps) => {
   const items = products.slice(0, 6);
   const screenWidth = Dimensions.get('window').width;
@@ -24,7 +28,7 @@ export const DailySuggestionsSection = ({
 
   return (
     <View className="mb-5">
-      <SectionHeader title="Goi y hom nay" subtitle="San pham duoc chon ngau nhien tu BE" />
+      <SectionHeader title={title} subtitle={subtitle} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

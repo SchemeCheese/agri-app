@@ -1,6 +1,6 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { AxiosError } from 'axios';
 
@@ -13,7 +13,9 @@ import { ProductGallery } from '@/components/product/ProductGallery';
 import { ProductSummary } from '@/components/product/ProductSummary';
 import { ProductTabs } from '@/components/product/ProductTabs';
 import { ProductInfoTab } from '@/components/product/ProductInfoTab';
+import { useBehaviorTracker } from '@/hooks/useBehaviorTracker';
 import { useProductDetail, useProducts } from '@/hooks/useProducts';
+import { useRecommendations } from '@/hooks/useRecommendations';
 import { startNegotiation } from '@/services/chatSocket';
 import { useAuthStore } from '@/store/authStore';
 import { useCartStore } from '@/store/cartStore';
@@ -84,11 +86,14 @@ export default function ProductDetailScreen() {
   const [negotiationQuantity, setNegotiationQuantity] = useState('');
   const [negotiationPrice, setNegotiationPrice] = useState('');
   const [startingNegotiation, setStartingNegotiation] = useState(false);
+  const trackedViewRef = useRef<string | null>(null);
 
   const { data: product, isLoading, isError } = useProductDetail(productId);
+  const { data: detailRecommendations = [] } = useRecommendations('detail', productId);
   const { products } = useProducts();
   const accessToken = useAuthStore((state) => state.accessToken);
   const addItem = useCartStore((state) => state.addItem);
+  const { track } = useBehaviorTracker();
 
   const sameShopProducts = useMemo(() => {
     if (!product) return [];
@@ -101,12 +106,33 @@ export default function ProductDetailScreen() {
   }, [product, products]);
 
   const relatedProducts = useMemo(() => {
+    if (detailRecommendations.length > 0) {
+      return detailRecommendations
+        .filter((item) => item.id !== product?.id)
+        .slice(0, 6);
+    }
+
     if (!product) return [];
 
     return products
       .filter((item) => item.category === product.category && item.id !== product.id)
       .slice(0, 6);
-  }, [product, products]);
+  }, [detailRecommendations, product, products]);
+
+  useEffect(() => {
+    if (!product?.id) return;
+    if (trackedViewRef.current === product.id) return;
+
+    trackedViewRef.current = product.id;
+    void track('VIEW_PRODUCT', {
+      targetId: product.id,
+      metadata: {
+        context: 'detail',
+        category: product.category,
+      },
+      weight: 1,
+    });
+  }, [product?.category, product?.id, track]);
 
   const isUnavailable = (product?.is_active === false) || (product?.stock ?? 0) <= 0;
 
@@ -124,6 +150,15 @@ export default function ProductDetailScreen() {
   const handleAddToCart = () => {
     if (!product) return;
     addItem(product, quantity);
+    void track('ADD_TO_CART', {
+      targetId: product.id,
+      metadata: {
+        context: 'detail',
+        quantity,
+        category: product.category,
+      },
+      weight: 4,
+    });
   };
 
   const handleBuyNow = () => {
@@ -193,6 +228,16 @@ export default function ProductDetailScreen() {
         proposedPrice: parsedPrice,
       });
 
+      void track('START_CHAT', {
+        targetId: product.id,
+        metadata: {
+          context: 'detail_negotiation',
+          quantity: parsedQty,
+          proposedPrice: parsedPrice,
+        },
+        weight: 5,
+      });
+
       setNegotiationModalVisible(false);
       Alert.alert(
         'Da gui de xuat',
@@ -233,6 +278,15 @@ export default function ProductDetailScreen() {
         partnerId: product.seller_id,
         productId: product.id,
       });
+
+      void track('START_CHAT', {
+        targetId: product.id,
+        metadata: {
+          context: 'detail_chat_button',
+        },
+        weight: 5,
+      });
+
       router.push({ pathname: '/(tabs)/chat', params: { conversationId: conversation.conversationId } });
     } catch (error) {
       Alert.alert('Khong the bat dau chat', extractErrorMessage(error, 'Vui long thu lai.'));
@@ -411,7 +465,16 @@ export default function ProductDetailScreen() {
                         image={item.images?.[0]}
                         price={item.price}
                         sold={item.sold}
-                        onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.id } })}
+                        onPress={() => {
+                          void track('VIEW_PRODUCT', {
+                            targetId: item.id,
+                            metadata: {
+                              context: 'detail_same_shop',
+                            },
+                            weight: 1,
+                          });
+                          router.push({ pathname: '/product/[id]', params: { id: item.id } });
+                        }}
                       />
                     ))
                   ) : (
@@ -435,7 +498,17 @@ export default function ProductDetailScreen() {
                       image={item.images?.[0]}
                       price={item.price}
                       sold={item.sold}
-                      onPress={() => router.push({ pathname: '/product/[id]', params: { id: item.id } })}
+                      onPress={() => {
+                        void track('VIEW_PRODUCT', {
+                          targetId: item.id,
+                          metadata: {
+                            context: 'detail_recommendation',
+                            seedProductId: product?.id,
+                          },
+                          weight: 1,
+                        });
+                        router.push({ pathname: '/product/[id]', params: { id: item.id } });
+                      }}
                     />
                   ))}
                 </View>

@@ -4,6 +4,7 @@ import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'rea
 import { useFocusEffect } from '@react-navigation/native';
 
 import api from '@/api/client';
+import { Product } from '@/api/product';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingState } from '@/components/common/LoadingState';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
@@ -19,6 +20,8 @@ import { PromoSection } from '@/components/home/PromoSection';
 import { DailySuggestionsSection } from '@/components/home/DailySuggestionsSection';
 import { GallerySection } from '@/components/home/GallerySection';
 import { HomeFooterCard } from '@/components/home/HomeFooterCard';
+import { useBehaviorTracker } from '@/hooks/useBehaviorTracker';
+import { useRecommendations } from '@/hooks/useRecommendations';
 import { useAuthStore } from '@/store/authStore';
 import { formatPrice } from '@/utils/format';
 
@@ -55,10 +58,61 @@ export default function HomeScreen() {
   const [loadingSellerDashboard, setLoadingSellerDashboard] = useState(false);
 
   const { products, categories, isLoading, isError } = useProducts();
+  const { data: homeRecommendations = [] } = useRecommendations('home');
   const addItem = useCartStore((state) => state.addItem);
+  const { track } = useBehaviorTracker();
   const { totalItems } = useCartSummary();
 
   const filteredProducts = useProductSearch(products, keyword, selectedCategory);
+  const suggestionProducts = homeRecommendations.length > 0 ? homeRecommendations : products.slice(0, 6);
+
+  const handleOpenProduct = (productId: string, source: 'grid' | 'daily') => {
+    void track('VIEW_PRODUCT', {
+      targetId: productId,
+      metadata: {
+        context: 'home',
+        source,
+      },
+      weight: 1,
+    });
+
+    router.push({ pathname: '/product/[id]', params: { id: productId } });
+  };
+
+  const handleAddToCart = (item: Product, source: 'grid' | 'daily') => {
+    addItem(item);
+    void track('ADD_TO_CART', {
+      targetId: item.id,
+      metadata: {
+        context: 'home',
+        source,
+        category: item.category,
+      },
+      weight: 4,
+    });
+  };
+
+  const handleSearchKeyword = (value: string) => {
+    setKeyword(value);
+    void track('SEARCH', {
+      metadata: {
+        keyword: value,
+        context: 'home_top_search',
+      },
+      weight: 2,
+    });
+  };
+
+  const handleOpenSearch = (source: 'hero_search' | 'hero_explore') => {
+    void track('SEARCH', {
+      metadata: {
+        keyword,
+        context: source,
+      },
+      weight: 2,
+    });
+    router.push('/(tabs)/search');
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -197,11 +251,11 @@ export default function HomeScreen() {
           onPressCart={() => router.push('/(tabs)/cart')}
           keyword={keyword}
           onChangeKeyword={setKeyword}
-          onPressExplore={() => router.push('/(tabs)/search')}
-          onPressSearch={() => router.push('/(tabs)/search')}
+          onPressExplore={() => handleOpenSearch('hero_explore')}
+          onPressSearch={() => handleOpenSearch('hero_search')}
         />
 
-        <TopSearches onPressKeyword={setKeyword} />
+        <TopSearches onPressKeyword={handleSearchKeyword} />
 
         <View className="mb-4">
           <SectionHeader title="Danh mục sản phẩm" subtitle="Lọc nhanh theo nhóm sản phẩm" />
@@ -225,10 +279,8 @@ export default function HomeScreen() {
             title="Danh sách sản phẩm"
             subtitle="Các sản phẩm đang hoạt động"
             products={filteredProducts.slice(0, 8)}
-            onPressProduct={(productId) =>
-              router.push({ pathname: '/product/[id]', params: { id: productId } })
-            }
-            onAddToCart={(item) => addItem(item)}
+            onPressProduct={(productId) => handleOpenProduct(productId, 'grid')}
+            onAddToCart={(item) => handleAddToCart(item, 'grid')}
           />
         ) : null}
 
@@ -240,11 +292,11 @@ export default function HomeScreen() {
         <PromoSection />
 
         <DailySuggestionsSection
-          products={products}
-          onPressProduct={(productId) =>
-            router.push({ pathname: '/product/[id]', params: { id: productId } })
-          }
-          onAddToCart={(item) => addItem(item)}
+          products={suggestionProducts}
+          title={homeRecommendations.length > 0 ? 'Goi y danh rieng cho ban' : 'Goi y hom nay'}
+          subtitle={homeRecommendations.length > 0 ? 'Xep hang theo hanh vi xem, tim kiem va gio hang' : 'San pham duoc chon ngau nhien tu BE'}
+          onPressProduct={(productId) => handleOpenProduct(productId, 'daily')}
+          onAddToCart={(item) => handleAddToCart(item, 'daily')}
         />
 
         <GallerySection />
