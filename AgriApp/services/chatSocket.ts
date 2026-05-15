@@ -3,6 +3,7 @@ import api from '@/api/client';
 type SocketLike = {
   connected: boolean;
   disconnect: () => void;
+  removeAllListeners?: (event?: string) => void;
   on: (event: string, callback: (...args: any[]) => void) => void;
   off: (event: string, callback?: (...args: any[]) => void) => void;
   timeout: (ms: number) => {
@@ -29,6 +30,14 @@ type JoinRoomPayload = {
 type SendMessagePayload = {
   conversationId: string;
   content: string;
+  clientMessageId?: string;
+};
+
+type SendImageMessagePayload = {
+  conversationId: string;
+  imageUrl: string;
+  caption?: string;
+  clientMessageId?: string;
 };
 
 type SendNegotiationQuotePayload = {
@@ -102,6 +111,8 @@ type NegotiationAcceptedEvent = {
 
 let chatSocket: SocketLike | null = null;
 let connectedToken: string | null = null;
+// Promise inflight để 2 caller song song không cùng tạo 2 socket cho cùng token
+let connectingPromise: Promise<SocketLike> | null = null;
 
 const toSocketBaseUrl = (baseUrl?: string) => {
   const fallback = 'https://agri-connect-be-production.up.railway.app';
@@ -115,27 +126,72 @@ const toSocketBaseUrl = (baseUrl?: string) => {
   }
 };
 
-const ensureChatSocket = async (accessToken: string) => {
+// Tear down hoàn toàn — gọi khi logout hoặc token đổi.
+const teardownSocket = (socket: SocketLike | null) => {
+  if (!socket) return;
+  try {
+    socket.removeAllListeners?.();
+  } catch {
+    /* noop */
+  }
+  try {
+    socket.disconnect();
+  } catch {
+    /* noop */
+  }
+};
+
+export const disconnectChatSocket = () => {
+  teardownSocket(chatSocket);
+  chatSocket = null;
+  connectedToken = null;
+  connectingPromise = null;
+};
+
+const ensureChatSocket = async (accessToken: string): Promise<SocketLike> => {
+  // Token đổi → tear down socket cũ trước khi tạo mới
+  if (chatSocket && connectedToken !== accessToken) {
+    teardownSocket(chatSocket);
+    chatSocket = null;
+    connectedToken = null;
+    connectingPromise = null;
+  }
+
+  // Đã kết nối → trả luôn
+  if (chatSocket && chatSocket.connected) return chatSocket;
+
+  // Đang trong quá trình kết nối với cùng token → đợi xong
+  if (connectingPromise && connectedToken === accessToken) {
+    return connectingPromise;
+  }
+
   const base = toSocketBaseUrl(api.defaults.baseURL);
 
-  if (!chatSocket || connectedToken !== accessToken) {
-    if (chatSocket) {
-      chatSocket.disconnect();
-    }
-
+  // Nếu chưa có socket → tạo mới
+  if (!chatSocket) {
     chatSocket = io(`${base}/chat`, {
       transports: ['websocket'],
       auth: { token: `Bearer ${accessToken}` },
       reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
       timeout: 10000,
     });
-
     connectedToken = accessToken;
+
+    // BE chủ động disconnect khi auth fail → reset singleton để lần sau tạo lại
+    chatSocket.on('disconnect', (reason: string) => {
+      // 'io server disconnect' = BE kick → cần manual reconnect
+      if (reason === 'io server disconnect') {
+        disconnectChatSocket();
+      }
+    });
   }
 
-  if (chatSocket.connected) return chatSocket;
+  const socket = chatSocket;
 
-  await new Promise<void>((resolve, reject) => {
+  connectingPromise = new Promise<SocketLike>((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error('Khong the ket noi chat server.'));
@@ -143,7 +199,7 @@ const ensureChatSocket = async (accessToken: string) => {
 
     const onConnect = () => {
       cleanup();
-      resolve();
+      resolve(socket);
     };
 
     const onError = (err: Error) => {
@@ -153,15 +209,17 @@ const ensureChatSocket = async (accessToken: string) => {
 
     const cleanup = () => {
       clearTimeout(timer);
-      chatSocket?.off('connect', onConnect);
-      chatSocket?.off('connect_error', onError);
+      socket.off('connect', onConnect);
+      socket.off('connect_error', onError);
     };
 
-    chatSocket?.on('connect', onConnect);
-    chatSocket?.on('connect_error', onError);
+    socket.on('connect', onConnect);
+    socket.on('connect_error', onError);
+  }).finally(() => {
+    connectingPromise = null;
   });
 
-  return chatSocket;
+  return connectingPromise;
 };
 
 const emitWithAck = async <T>(socket: SocketLike, eventName: string, payload: Record<string, unknown>) => {
@@ -192,9 +250,29 @@ export const joinChatRoom = async (accessToken: string, payload: JoinRoomPayload
   return emitWithAck(socket, 'joinRoom', payload);
 };
 
+// Sinh UUID idempotency cho mobile (React Native không có crypto.randomUUID < RN 0.74).
+const genClientId = () => {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 export const sendChatMessage = async (accessToken: string, payload: SendMessagePayload) => {
   const socket = await ensureChatSocket(accessToken);
-  return emitWithAck(socket, 'sendMessage', payload);
+  const finalPayload: SendMessagePayload = {
+    ...payload,
+    clientMessageId: payload.clientMessageId ?? genClientId(),
+  };
+  return emitWithAck(socket, 'sendMessage', finalPayload as Record<string, unknown>);
+};
+
+export const sendChatImage = async (accessToken: string, payload: SendImageMessagePayload) => {
+  const socket = await ensureChatSocket(accessToken);
+  const finalPayload: SendImageMessagePayload = {
+    ...payload,
+    clientMessageId: payload.clientMessageId ?? genClientId(),
+  };
+  return emitWithAck(socket, 'sendImageMessage', finalPayload as Record<string, unknown>);
 };
 
 export const sendNegotiationQuote = async (accessToken: string, payload: SendNegotiationQuotePayload) => {
@@ -257,5 +335,22 @@ export const subscribeNegotiationAccepted = async (
 
   return () => {
     socket.off('negotiationAccepted', listener);
+  };
+};
+
+export type UnreadUpdatedEvent = {
+  conversationId: string;
+  unread: number;
+  totalUnread: number;
+};
+
+export const subscribeUnreadUpdated = async (
+  accessToken: string,
+  listener: (event: UnreadUpdatedEvent) => void,
+) => {
+  const socket = await ensureChatSocket(accessToken);
+  socket.on('unreadUpdated', listener);
+  return () => {
+    socket.off('unreadUpdated', listener);
   };
 };

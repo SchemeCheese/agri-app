@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import storage from './storage';
+import { disconnectChatSocket } from '@/services/chatSocket';
+import { disconnectAISocket } from '@/services/aiSocket';
 
 export type UserRole = 'BUYER' | 'SELLER' | 'ADMIN';
 
@@ -25,7 +27,11 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       setSession: ({ user, accessToken }) => set({ user, accessToken }),
-      logout: () => set({ user: null, accessToken: null }),
+      logout: () => {
+        disconnectChatSocket();
+        disconnectAISocket();
+        set({ user: null, accessToken: null });
+      },
     }),
     {
       name: 'auth-store',

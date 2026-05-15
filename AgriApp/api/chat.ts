@@ -18,6 +18,7 @@ export type ConversationSummary = {
     message_type?: string;
     created_at?: string;
   } | null;
+  unread_count?: number;
   created_at?: string;
 };
 
@@ -29,6 +30,7 @@ export type ChatMessage = {
   };
   message_content?: string;
   message_type?: string;
+  image_url?: string | null;
   created_at?: string;
   context_product?: {
     id: string;
@@ -67,6 +69,29 @@ export type InitiateChatResponse = {
   } | null;
 };
 
+// ─── Upload ảnh chat ─────────────────────────────────────────────────────
+// uri: file:// hoặc content:// từ expo-image-picker.
+// Trả về { url } để FE dùng cho event WS sendImageMessage.
+export const uploadChatImage = async (
+  accessToken: string,
+  asset: { uri: string; mimeType?: string | null; fileName?: string | null },
+): Promise<{ url: string; size: number; mime: string }> => {
+  const form = new FormData();
+  const mime = asset.mimeType || 'image/jpeg';
+  const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : 'jpg';
+  const name = asset.fileName || `chat-${Date.now()}.${ext}`;
+  // React Native FormData yêu cầu shape { uri, name, type }
+  form.append('image', { uri: asset.uri, name, type: mime } as any);
+
+  const { data } = await api.post('/chat/upload-image', form, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return data;
+};
+
 export const initiateChat = async (accessToken: string, payload: InitiateChatPayload) => {
   const { data } = await api.post<InitiateChatResponse>('/chat/initiate', payload, {
     headers: {
@@ -87,12 +112,33 @@ export const getConversations = async (accessToken: string) => {
   return Array.isArray(data) ? data : [];
 };
 
-export const getConversationMessages = async (accessToken: string, conversationId: string) => {
-  const { data } = await api.get<ChatMessage[]>(`/chat/conversations/${conversationId}/messages`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+export interface GetMessagesResult {
+  items: ChatMessage[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export const getConversationMessages = async (
+  accessToken: string,
+  conversationId: string,
+  opts: { limit?: number; before?: string } = {},
+): Promise<GetMessagesResult> => {
+  const params: Record<string, string> = {};
+  if (opts.limit) params.limit = String(opts.limit);
+  if (opts.before) params.before = opts.before;
+
+  const { data } = await api.get(`/chat/conversations/${conversationId}/messages`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    params,
   });
 
-  return Array.isArray(data) ? data : [];
+  // BE shape mới: { items, nextCursor, hasMore }. Fallback cho mảng cũ.
+  if (Array.isArray(data)) {
+    return { items: data, nextCursor: null, hasMore: false };
+  }
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    nextCursor: data?.nextCursor ?? null,
+    hasMore: !!data?.hasMore,
+  };
 };

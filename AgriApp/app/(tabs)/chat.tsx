@@ -1,7 +1,7 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,19 +14,22 @@ import {
   View,
 } from 'react-native';
 
-import { ChatMessage, ConversationSummary, getConversationMessages, getConversations } from '@/api/chat';
+import { ChatMessage, ConversationSummary, getConversationMessages, getConversations, uploadChatImage } from '@/api/chat';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
+import * as ImagePicker from 'expo-image-picker';
 import {
   cancelNegotiation,
   joinChatRoom,
   respondToQuote,
+  sendChatImage,
   sendChatMessage,
   sendNegotiationQuote,
   subscribeNegotiationAccepted,
   subscribeNegotiationCancelled,
   subscribeNewMessages,
   subscribeQuoteUpdated,
+  subscribeUnreadUpdated,
 } from '@/services/chatSocket';
 import { useAuthStore } from '@/store/authStore';
 import { formatPrice } from '@/utils/format';
@@ -93,9 +96,21 @@ export default function ChatTabScreen() {
     try {
       const data = await getConversations(accessToken);
       setConversations(data);
+      // Hydrate unread từ BE — source of truth, đồng bộ qua reload/restart
+      const fromServer: Record<string, number> = {};
+      for (const c of data) {
+        if (typeof (c as any).unread_count === 'number') {
+          fromServer[c.id] = (c as any).unread_count;
+        }
+      }
       setUnreadByConversation((current) => {
         const activeIds = new Set(data.map((item) => item.id));
-        return Object.fromEntries(Object.entries(current).filter(([id]) => activeIds.has(id)));
+        // BE value thắng — local optimistic chỉ dùng để hiển thị tức thì giữa các tick BE chưa kịp emit
+        const merged: Record<string, number> = {};
+        for (const id of activeIds) {
+          merged[id] = fromServer[id] ?? current[id] ?? 0;
+        }
+        return merged;
       });
 
       if (data.length === 0) {
@@ -123,20 +138,55 @@ export default function ChatTabScreen() {
     setUnreadByConversation((current) => ({ ...current, [selectedConversationId]: 0 }));
   }, [selectedConversationId]);
 
+  const nextCursorRef = useRef<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+
   const fetchMessageHistory = useCallback(async () => {
     if (!accessToken || !selectedConversationId) {
       setMessages([]);
+      nextCursorRef.current = null;
+      setHasMoreMessages(false);
       return;
     }
 
     setLoadingMessages(true);
     try {
-      const history = await getConversationMessages(accessToken, selectedConversationId);
-      setMessages(history);
+      const { items, nextCursor, hasMore } = await getConversationMessages(
+        accessToken,
+        selectedConversationId,
+        { limit: 30 },
+      );
+      setMessages(items);
+      nextCursorRef.current = nextCursor;
+      setHasMoreMessages(hasMore);
     } catch {
       setMessages([]);
+      nextCursorRef.current = null;
+      setHasMoreMessages(false);
     } finally {
       setLoadingMessages(false);
+    }
+  }, [accessToken, selectedConversationId]);
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!accessToken || !selectedConversationId) return;
+    const cursor = nextCursorRef.current;
+    if (!cursor || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    try {
+      const { items, nextCursor, hasMore } = await getConversationMessages(
+        accessToken,
+        selectedConversationId,
+        { limit: 30, before: cursor },
+      );
+      setMessages((prev) => [...items, ...prev]);
+      nextCursorRef.current = nextCursor;
+      setHasMoreMessages(hasMore);
+    } catch {
+      // giữ trạng thái cũ
+    } finally {
+      loadingMoreRef.current = false;
     }
   }, [accessToken, selectedConversationId]);
 
@@ -189,6 +239,7 @@ export default function ChatTabScreen() {
     let unsubscribeQuoteUpdated: (() => void) | null = null;
     let unsubscribeCancelled: (() => void) | null = null;
     let unsubscribeAccepted: (() => void) | null = null;
+    let unsubscribeUnread: (() => void) | null = null;
 
     const setupRealtime = async () => {
       try {
@@ -265,6 +316,17 @@ export default function ChatTabScreen() {
             `${event.checkoutData.productName ?? 'San pham'} - ${event.checkoutData.quantity ?? 0} ${event.checkoutData.unit ?? 'sp'}`,
           );
         });
+
+        unsubscribeUnread = await subscribeUnreadUpdated(accessToken, (payload) => {
+          if (!mounted) return;
+          setUnreadByConversation((current) => ({
+            ...current,
+            [payload.conversationId]: payload.unread,
+          }));
+          setConversations((prev) =>
+            prev.map((c) => (c.id === payload.conversationId ? { ...c, unread_count: payload.unread } as any : c)),
+          );
+        });
       } catch {
         // Fallback to REST polling/history.
       }
@@ -278,6 +340,7 @@ export default function ChatTabScreen() {
       if (unsubscribeQuoteUpdated) unsubscribeQuoteUpdated();
       if (unsubscribeCancelled) unsubscribeCancelled();
       if (unsubscribeAccepted) unsubscribeAccepted();
+      if (unsubscribeUnread) unsubscribeUnread();
     };
   }, [accessToken, fetchConversationList, fetchMessageHistory, selectedConversationId, user?.id]);
 
@@ -295,6 +358,56 @@ export default function ChatTabScreen() {
       });
     } catch {
       setDraftMessage(content);
+    }
+  };
+
+  // ── Image upload ──────────────────────────────────────────────────────
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const handlePickAndSendImage = async () => {
+    if (!accessToken || !selectedConversationId || uploadingImage) return;
+
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Can quyen truy cap anh', 'Vui long cap quyen de gui anh trong chat.');
+        return;
+      }
+    } catch {
+      // Trên Web Expo, permission API có thể không tồn tại.
+    }
+
+    const picker = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: false,
+      base64: false,
+    });
+
+    if (picker.canceled) return;
+    const asset = picker.assets?.[0];
+    if (!asset?.uri) return;
+
+    // Client-side size guard (asset.fileSize có thể null trên iOS)
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+      Alert.alert('Anh qua lon', 'Vui long chon anh duoi 5MB.');
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      const { url } = await uploadChatImage(accessToken, {
+        uri: asset.uri,
+        mimeType: asset.mimeType ?? 'image/jpeg',
+        fileName: asset.fileName ?? null,
+      });
+      await sendChatImage(accessToken, {
+        conversationId: selectedConversationId,
+        imageUrl: url,
+      });
+    } catch (err: any) {
+      Alert.alert('Khong gui duoc anh', err?.response?.data?.message ?? err?.message ?? 'Vui long thu lai.');
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -541,6 +654,26 @@ export default function ChatTabScreen() {
       );
     }
 
+    // IMAGE bubble
+    if (message.message_type === 'IMAGE' && message.image_url) {
+      const imgUri = resolveImageUrl(message.image_url);
+      return (
+        <View key={message.id} className={`mb-2.5 ${isMine ? 'items-end' : 'items-start'}`}>
+          <View className={`max-w-[80%] rounded-2xl overflow-hidden ${isMine ? 'rounded-br-md' : 'rounded-bl-md'} bg-white border border-slate-200`}>
+            <Image
+              source={{ uri: imgUri }}
+              style={{ width: 220, height: 220 }}
+              resizeMode="cover"
+            />
+            {message.message_content ? (
+              <Text className="px-2.5 py-1.5 text-slate-700 text-xs">{message.message_content}</Text>
+            ) : null}
+          </View>
+          <Text className="text-[10px] text-slate-400 mt-1">{formatMessageTime(message.created_at)}</Text>
+        </View>
+      );
+    }
+
     return (
       <View key={message.id} className={`mb-2.5 ${isMine ? 'items-end' : 'items-start'}`}>
         <View className={`max-w-[85%] px-3 py-2 rounded-2xl ${isMine ? 'bg-emerald-600 rounded-br-md' : 'bg-white border border-slate-200 rounded-bl-md'}`}>
@@ -569,8 +702,19 @@ export default function ChatTabScreen() {
   return (
     <ScreenContainer>
       <View className="px-4 py-3 border-b border-slate-100 bg-white">
-        <Text className="text-2xl font-bold text-slate-900">Chat</Text>
-        <Text className="text-sm text-slate-500 mt-1">{isSeller ? 'Chon khach hang de tra loi tin nhan' : 'Nhan tin voi shop'}</Text>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-1">
+            <Text className="text-2xl font-bold text-slate-900">Chat</Text>
+            <Text className="text-sm text-slate-500 mt-1">{isSeller ? 'Chon khach hang de tra loi tin nhan' : 'Nhan tin voi shop'}</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => router.push('/ai-chat')}
+            className="bg-green-600 rounded-full px-3 py-2 flex-row items-center"
+          >
+            <FontAwesome name="comments" size={14} color="#FFFFFF" />
+            <Text className="text-white font-bold text-xs ml-1.5">Tro ly AI</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View className="bg-white border-b border-slate-100 py-3">
@@ -629,7 +773,24 @@ export default function ChatTabScreen() {
               <Text className="font-bold text-slate-900" numberOfLines={1}>{selectedConversation?.partner?.full_name || 'Hoi thoai'}</Text>
             </View>
 
-            <ScrollView className="flex-1 px-4 py-3" showsVerticalScrollIndicator={false}>
+            <ScrollView
+              className="flex-1 px-4 py-3"
+              showsVerticalScrollIndicator={false}
+              onScroll={(e) => {
+                if (e.nativeEvent.contentOffset.y < 60 && hasMoreMessages && !loadingMoreRef.current) {
+                  void loadMoreHistory();
+                }
+              }}
+              scrollEventThrottle={200}
+            >
+              {hasMoreMessages && !loadingMessages && (
+                <TouchableOpacity
+                  onPress={() => void loadMoreHistory()}
+                  className="py-2 items-center"
+                >
+                  <Text className="text-xs text-green-700">⬆ Tải tin nhắn cũ hơn</Text>
+                </TouchableOpacity>
+              )}
               {loadingMessages ? (
                 <View className="py-6 items-center">
                   <ActivityIndicator size="small" color="#16A34A" />
@@ -644,6 +805,17 @@ export default function ChatTabScreen() {
             </ScrollView>
 
             <View className="px-4 py-3 border-t border-slate-200 bg-white flex-row items-center">
+              <TouchableOpacity
+                onPress={() => void handlePickAndSendImage()}
+                disabled={uploadingImage}
+                className={`mr-2 w-10 h-10 rounded-xl items-center justify-center ${uploadingImage ? 'bg-slate-200' : 'bg-slate-100'}`}
+              >
+                {uploadingImage ? (
+                  <ActivityIndicator size="small" color="#16A34A" />
+                ) : (
+                  <FontAwesome name="picture-o" size={16} color="#16A34A" />
+                )}
+              </TouchableOpacity>
               <TextInput
                 className="flex-1 border border-slate-200 rounded-xl px-3 py-2.5"
                 placeholder="Nhap tin nhan..."
