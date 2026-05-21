@@ -23,4 +23,38 @@ const api = axios.create({
   },
 });
 
+// Mirrors FE/lib/axios.ts — request interceptor pulls the JWT from the persisted
+// Zustand auth store so callers don't have to thread accessToken through every
+// useEffect. Existing explicit `headers: { Authorization: ... }` keep working
+// because axios merges per-request headers on top of these defaults.
+api.interceptors.request.use(
+  (config) => {
+    try {
+      // Lazy require to avoid the Metro circular dep that would happen if
+      // store/authStore.ts imported anything that imports this client.
+      const { useAuthStore } = require('@/store/authStore');
+      const token = useAuthStore.getState().accessToken;
+      if (token && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    } catch {
+      /* store not initialized yet — fall through unauthenticated */
+    }
+    return config;
+  },
+  (error) => Promise.reject(error),
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (!error.response) {
+      console.warn(`[API] Network error — could not reach ${baseURL}`, error.message);
+    } else if (error.response.status >= 500) {
+      console.warn(`[API] ${error.config?.method?.toUpperCase()} ${error.config?.url} → ${error.response.status}`);
+    }
+    return Promise.reject(error);
+  },
+);
+
 export default api;

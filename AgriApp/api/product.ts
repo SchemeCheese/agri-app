@@ -1,5 +1,15 @@
 import api from './client';
 
+export type ProductReview = {
+  id: string;
+  userName: string;
+  avatar?: string | null;
+  rating: number;
+  comment?: string | null;
+  date: string;
+  images?: string[];
+};
+
 export type Product = {
   id: string;
   name: string;
@@ -17,6 +27,8 @@ export type Product = {
   is_active?: boolean;
   rating?: number;
   reviewCount?: number;
+  averageRating?: number;
+  reviews?: ProductReview[];
   sold?: number;
   min_negotiation_qty?: number | null;
   shop?: {

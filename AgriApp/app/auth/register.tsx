@@ -1,10 +1,12 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import api from '@/api/client';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
+import { useGoogleAuth } from '@/services/googleAuth';
+import { useAuthStore } from '@/store/authStore';
 
 type RegisterRole = 'BUYER' | 'SELLER';
 
@@ -23,6 +25,59 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [successText, setSuccessText] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  const setSession = useAuthStore((s) => s.setSession);
+  const { response: googleResponse, promptAsync, isConfigured: googleConfigured, syncWithBackend } = useGoogleAuth(role);
+
+  useEffect(() => {
+    const handle = async () => {
+      if (!googleResponse) return;
+      if (googleResponse.type !== 'success') {
+        if (googleResponse.type === 'error') {
+          setErrorText(googleResponse.error?.message ?? 'Đăng nhập Google thất bại.');
+        }
+        setGoogleLoading(false);
+        return;
+      }
+      const idToken = googleResponse.params?.id_token || googleResponse.authentication?.idToken;
+      if (!idToken) {
+        setErrorText('Không lấy được Google idToken.');
+        setGoogleLoading(false);
+        return;
+      }
+      try {
+        const synced = await syncWithBackend(idToken);
+        setSession({ user: synced.user, accessToken: synced.access_token });
+        router.replace('/profile');
+      } catch (err: any) {
+        const message = err?.response?.data?.message ?? 'Đăng ký bằng Google thất bại.';
+        setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
+      } finally {
+        setGoogleLoading(false);
+      }
+    };
+    void handle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleResponse]);
+
+  const handleGoogleSignup = async () => {
+    if (!googleConfigured) {
+      Alert.alert(
+        'Chưa cấu hình Google',
+        'Hãy điền EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID vào APP/.env và reload Expo.',
+      );
+      return;
+    }
+    setErrorText('');
+    setGoogleLoading(true);
+    try {
+      await promptAsync();
+    } catch (err: any) {
+      setErrorText(err?.message ?? 'Không mở được Google sign-in.');
+      setGoogleLoading(false);
+    }
+  };
 
   const handleRegister = async () => {
     if (!fullName.trim() || !email.trim() || !password || !confirmPassword) {
@@ -149,8 +204,29 @@ export default function RegisterScreen() {
                 />
               </View>
 
-              <TouchableOpacity className="mt-5 bg-[#16A34A] rounded-xl py-4 items-center" onPress={handleRegister} disabled={loading}>
+              <TouchableOpacity className="mt-5 bg-[#16A34A] rounded-xl py-4 items-center" onPress={handleRegister} disabled={loading || googleLoading}>
                 {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text className="text-white font-extrabold text-base">ĐĂNG KÝ TÀI KHOẢN</Text>}
+              </TouchableOpacity>
+
+              <View className="flex-row items-center my-4">
+                <View className="flex-1 h-px bg-slate-200" />
+                <Text className="mx-3 text-xs text-slate-400">HOẶC</Text>
+                <View className="flex-1 h-px bg-slate-200" />
+              </View>
+
+              <TouchableOpacity
+                className="bg-white border border-slate-300 rounded-xl py-3.5 items-center flex-row justify-center"
+                onPress={handleGoogleSignup}
+                disabled={loading || googleLoading}
+              >
+                {googleLoading ? (
+                  <ActivityIndicator color="#16A34A" />
+                ) : (
+                  <>
+                    <FontAwesome name="google" size={18} color="#DB4437" />
+                    <Text className="ml-2 text-slate-700 font-bold">Đăng ký với Google ({role === 'BUYER' ? 'Người mua' : 'Người bán'})</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </>
           ) : (

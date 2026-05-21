@@ -430,8 +430,8 @@ export default function CheckoutScreen() {
 
               <View className="p-4 gap-2">
                 {[
-                  { id: 'COD', title: 'Thanh toan khi nhan hang', sub: 'Tien mat (COD)' },
-                  { id: 'MOMO', title: 'Vi dien tu MoMo', sub: 'Thanh toan qua app MoMo' },
+                  { id: 'COD', title: 'Thanh toan khi nhan hang', sub: 'Tien mat (COD)', icon: 'truck' as const },
+                  { id: 'MOMO', title: 'Vi dien tu MoMo', sub: 'Thanh toan qua app MoMo', icon: 'mobile' as const },
                 ].map((method) => (
                   <TouchableOpacity
                     key={method.id}
@@ -441,7 +441,7 @@ export default function CheckoutScreen() {
                     }`}
                   >
                     <View className={`w-8 h-8 rounded-lg items-center justify-center mr-3 ${paymentMethod === method.id ? 'bg-green-600' : 'bg-slate-200'}`}>
-                      <FontAwesome name="money" size={13} color={paymentMethod === method.id ? '#fff' : '#64748B'} />
+                      <FontAwesome name={method.icon} size={13} color={paymentMethod === method.id ? '#fff' : '#64748B'} />
                     </View>
                     <View className="flex-1">
                       <Text className="font-semibold text-slate-900">{method.title}</Text>

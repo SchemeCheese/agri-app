@@ -445,8 +445,99 @@ export default function ProductDetailScreen() {
               </View>
 
               <View className="mt-4 bg-white rounded-[28px] border border-slate-100 p-4">
-                <SectionTitle title="Danh gia san pham" />
-                <Text className="text-slate-500">Chua co danh gia nao.</Text>
+                <SectionTitle title={`Danh gia san pham (${product.reviewCount ?? product.reviews?.length ?? 0})`} />
+
+                {(product.averageRating ?? product.rating) && (product.reviewCount ?? product.reviews?.length ?? 0) > 0 ? (
+                  <View className="flex-row items-center mb-3 bg-amber-50 border border-amber-100 rounded-xl p-3">
+                    <View className="items-center mr-3">
+                      <Text className="text-amber-600 font-black text-3xl">
+                        {Number(product.averageRating ?? product.rating ?? 0).toFixed(1)}
+                      </Text>
+                      <View className="flex-row mt-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <FontAwesome
+                            key={star}
+                            name={star <= Math.round(Number(product.averageRating ?? product.rating ?? 0)) ? 'star' : 'star-o'}
+                            size={11}
+                            color="#F59E0B"
+                            style={{ marginRight: 1 }}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-amber-900 font-bold">
+                        Tren {product.reviewCount ?? product.reviews?.length ?? 0} luot danh gia
+                      </Text>
+                      <Text className="text-amber-700 text-xs mt-1">
+                        Tu khach hang da nhan hang va danh gia san pham
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {!product.reviews || product.reviews.length === 0 ? (
+                  <View className="py-6 items-center">
+                    <FontAwesome name="comments-o" size={32} color="#CBD5E1" />
+                    <Text className="text-slate-400 mt-2 text-sm">Chua co danh gia nao cho san pham nay.</Text>
+                  </View>
+                ) : (
+                  <View>
+                    {product.reviews.slice(0, 5).map((review) => (
+                      <View key={review.id} className="py-3 border-b border-slate-100">
+                        <View className="flex-row items-center">
+                          <View className="w-9 h-9 rounded-full bg-emerald-100 items-center justify-center overflow-hidden mr-3">
+                            {review.avatar ? (
+                              <Image source={{ uri: resolveImageUrl(review.avatar) }} className="w-full h-full" />
+                            ) : (
+                              <Text className="text-emerald-700 font-bold">
+                                {review.userName?.charAt(0)?.toUpperCase() ?? 'U'}
+                              </Text>
+                            )}
+                          </View>
+                          <View className="flex-1">
+                            <Text className="font-semibold text-slate-900">{review.userName ?? 'Khach hang'}</Text>
+                            <View className="flex-row items-center mt-0.5">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <FontAwesome
+                                  key={star}
+                                  name={star <= review.rating ? 'star' : 'star-o'}
+                                  size={11}
+                                  color="#F59E0B"
+                                  style={{ marginRight: 1 }}
+                                />
+                              ))}
+                              <Text className="text-[10px] text-slate-400 ml-2">
+                                {new Date(review.date).toLocaleDateString('vi-VN')}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        {review.comment ? (
+                          <Text className="text-slate-600 mt-2 text-sm leading-5">{review.comment}</Text>
+                        ) : null}
+                        {review.images && review.images.length > 0 ? (
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2">
+                            <View className="flex-row gap-2">
+                              {review.images.map((img, idx) => (
+                                <Image
+                                  key={`${review.id}-img-${idx}`}
+                                  source={{ uri: resolveImageUrl(img) }}
+                                  className="w-16 h-16 rounded-lg bg-slate-100"
+                                />
+                              ))}
+                            </View>
+                          </ScrollView>
+                        ) : null}
+                      </View>
+                    ))}
+                    {product.reviews.length > 5 ? (
+                      <Text className="text-center text-xs text-slate-400 mt-3">
+                        Va {product.reviews.length - 5} danh gia khac
+                      </Text>
+                    ) : null}
+                  </View>
+                )}
               </View>
 
               <View className="mt-4 bg-white rounded-[28px] border border-slate-100 p-4">

@@ -1,11 +1,14 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   ImageBackground,
+  Linking,
   Modal,
   ScrollView,
   Text,
@@ -36,6 +39,8 @@ type ProfileData = {
     address?: string | null;
     description?: string | null;
     cover_url?: string | null;
+    banners1?: string[] | null;
+    shop_google_maps_url?: string | null;
   } | null;
 };
 
@@ -113,6 +118,9 @@ type SellerDashboard = {
   totalRevenue?: number;
   totalOrders?: number;
   activeProducts?: number;
+  revenueByMonth?: { month: string; revenue: number }[];
+  top3BestSelling?: { id: string; name: string; sold: number; avgRating: number | null; reviewCount: number }[];
+  top3NeedImprovement?: { id: string; name: string; sold: number; avgRating: number | null; reviewCount: number }[];
 };
 
 type SellerVoucher = {
@@ -165,6 +173,55 @@ const sellerMenuItems: { key: TabKey; label: string; icon: React.ComponentProps<
   { key: 'shop', label: 'Ho so Shop', icon: 'home' },
   { key: 'chat', label: 'Chat', icon: 'comment-o' },
 ];
+
+// Simple SVG bar chart for revenue-by-month. Width is chart inner-area; outer
+// wrapper passes in a fixed pixel width derived from screen layout.
+const RevenueBarChart = ({
+  data,
+  width,
+  height = 180,
+}: {
+  data: { month: string; revenue: number }[];
+  width: number;
+  height?: number;
+}) => {
+  if (!data || data.length === 0) return null;
+  const padLeft = 8;
+  const padRight = 8;
+  const padTop = 16;
+  const padBottom = 28;
+  const innerW = Math.max(20, width - padLeft - padRight);
+  const innerH = Math.max(20, height - padTop - padBottom);
+  const maxRev = Math.max(1, ...data.map((d) => d.revenue));
+  const barGap = 4;
+  const barW = (innerW - barGap * (data.length - 1)) / data.length;
+
+  return (
+    <Svg width={width} height={height}>
+      <Line x1={padLeft} y1={padTop + innerH} x2={padLeft + innerW} y2={padTop + innerH} stroke="#E2E8F0" strokeWidth={1} />
+      {data.map((d, i) => {
+        const h = (d.revenue / maxRev) * innerH;
+        const x = padLeft + i * (barW + barGap);
+        const y = padTop + innerH - h;
+        const label = d.month.slice(5);
+        return (
+          <React.Fragment key={d.month}>
+            <Rect x={x} y={y} width={barW} height={h} fill="#16A34A" rx={2} />
+            <SvgText
+              x={x + barW / 2}
+              y={padTop + innerH + 14}
+              fontSize={9}
+              fill="#64748B"
+              textAnchor="middle"
+            >
+              {label}
+            </SvgText>
+          </React.Fragment>
+        );
+      })}
+    </Svg>
+  );
+};
 
 const getOrderStatusUi = (status: string) => {
   switch (status) {
@@ -257,6 +314,13 @@ export default function ProfileScreen() {
   const [newProductCategory, setNewProductCategory] = useState('khac');
   const [newProductOrigin, setNewProductOrigin] = useState('');
   const [newProductDescription, setNewProductDescription] = useState('');
+  const [newProductImages, setNewProductImages] = useState<{ uri: string; mimeType?: string | null; fileName?: string | null }[]>([]);
+  const [editingProduct, setEditingProduct] = useState<SellerProduct | null>(null);
+  const [editProductImages, setEditProductImages] = useState<{ uri: string; mimeType?: string | null; fileName?: string | null }[]>([]);
+  const [savingEditProduct, setSavingEditProduct] = useState(false);
+  const [restockModalVisible, setRestockModalVisible] = useState<{ product: SellerProduct; delta: string } | null>(null);
+  const [restocking, setRestocking] = useState(false);
+  const [productActionId, setProductActionId] = useState<string | null>(null);
   const [createVoucherModalVisible, setCreateVoucherModalVisible] = useState(false);
   const [creatingVoucher, setCreatingVoucher] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
@@ -272,6 +336,9 @@ export default function ProfileScreen() {
   const [shopAddressInput, setShopAddressInput] = useState('');
   const [shopDescriptionInput, setShopDescriptionInput] = useState('');
   const [shopPhoneInput, setShopPhoneInput] = useState('');
+  const [shopMapsUrlInput, setShopMapsUrlInput] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
 
   const isSeller = user?.role === 'SELLER';
   const menuItems = isSeller ? sellerMenuItems : buyerMenuItems;
@@ -407,13 +474,46 @@ export default function ProfileScreen() {
     }
   }, [user, accessToken]);
 
+  const pickProductImages = async (target: 'create' | 'edit') => {
+    const ImagePicker = await import('expo-image-picker');
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Can quyen', 'App can quyen truy cap thu vien anh.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsMultipleSelection: true,
+      selectionLimit: 5,
+    });
+    if (result.canceled) return;
+    const picked = result.assets.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName }));
+    if (target === 'create') setNewProductImages((prev) => [...prev, ...picked].slice(0, 5));
+    else setEditProductImages((prev) => [...prev, ...picked].slice(0, 5));
+  };
+
+  const buildProductFormData = (payload: Record<string, string | number | undefined>, images: typeof newProductImages) => {
+    const form = new FormData();
+    Object.entries(payload).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      form.append(k, String(v));
+    });
+    images.forEach((img, idx) => {
+      const mime = img.mimeType || 'image/jpeg';
+      const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+      const name = img.fileName || `product-${Date.now()}-${idx}.${ext}`;
+      form.append('files', { uri: img.uri, name, type: mime } as any);
+    });
+    return form;
+  };
+
   const handleCreateProduct = async () => {
     if (!accessToken || !newProductName.trim() || !newProductPrice.trim() || !newProductStock.trim()) return;
 
     setCreatingProduct(true);
     try {
-      await api.post(
-        '/products',
+      const form = buildProductFormData(
         {
           name: newProductName.trim(),
           price: Number(newProductPrice),
@@ -423,8 +523,12 @@ export default function ProfileScreen() {
           origin: newProductOrigin.trim() || undefined,
           description: newProductDescription.trim() || undefined,
         },
-        { headers: { Authorization: `Bearer ${accessToken}` } },
+        newProductImages,
       );
+
+      await api.post('/seller/products', form, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'multipart/form-data' },
+      });
 
       await fetchSellerProducts();
       await fetchSellerDashboard();
@@ -436,11 +540,111 @@ export default function ProfileScreen() {
       setNewProductCategory('khac');
       setNewProductOrigin('');
       setNewProductDescription('');
-    } catch {
-      // no-op
+      setNewProductImages([]);
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Tao san pham that bai.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
     } finally {
       setCreatingProduct(false);
     }
+  };
+
+  const handleSaveEditProduct = async () => {
+    if (!accessToken || !editingProduct) return;
+    setSavingEditProduct(true);
+    try {
+      const form = buildProductFormData(
+        {
+          name: editingProduct.name.trim() || undefined,
+          price: Number(editingProduct.price) || undefined,
+          stock: Number(editingProduct.stock) || undefined,
+          unit: editingProduct.unit?.trim() || undefined,
+          category: editingProduct.category?.trim() || undefined,
+          origin: editingProduct.origin?.trim() || undefined,
+        },
+        editProductImages,
+      );
+      await api.patch(`/seller/products/${editingProduct.id}`, form, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'multipart/form-data' },
+      });
+      await fetchSellerProducts();
+      setEditingProduct(null);
+      setEditProductImages([]);
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Khong luu duoc thay doi.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setSavingEditProduct(false);
+    }
+  };
+
+  const handleToggleProductStatus = async (p: SellerProduct) => {
+    if (!accessToken) return;
+    setProductActionId(p.id);
+    try {
+      await api.patch(
+        `/seller/products/${p.id}/status`,
+        { status: p.is_active ? 'INACTIVE' : 'ACTIVE' },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      await fetchSellerProducts();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Khong doi duoc trang thai.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setProductActionId(null);
+    }
+  };
+
+  const handleRestockProduct = async () => {
+    if (!accessToken || !restockModalVisible) return;
+    const delta = Number(restockModalVisible.delta);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    setRestocking(true);
+    try {
+      await api.patch(
+        `/seller/products/${restockModalVisible.product.id}/restock`,
+        { delta },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      await fetchSellerProducts();
+      setRestockModalVisible(null);
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Cap nhat ton kho that bai.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setRestocking(false);
+    }
+  };
+
+  const handleDeleteProduct = (p: SellerProduct) => {
+    if (!accessToken) return;
+    Alert.alert(
+      'Xoa san pham?',
+      `San pham "${p.name}" se bi xoa khoi shop. Hanh dong nay khong the hoan tac.`,
+      [
+        { text: 'Huy', style: 'cancel' },
+        {
+          text: 'Xoa',
+          style: 'destructive',
+          onPress: async () => {
+            setProductActionId(p.id);
+            try {
+              await api.delete(`/seller/products/${p.id}`, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+              });
+              await fetchSellerProducts();
+              await fetchSellerDashboard();
+            } catch (err: any) {
+              const message = err?.response?.data?.message ?? 'Khong xoa duoc.';
+              Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+            } finally {
+              setProductActionId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleCreateVoucher = async () => {
@@ -486,15 +690,77 @@ export default function ProfileScreen() {
           store_name: shopNameInput || undefined,
           store_address: shopAddressInput || undefined,
           store_description: shopDescriptionInput || undefined,
+          shop_google_maps_url: shopMapsUrlInput || undefined,
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
 
       await fetchProfile();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Khong luu duoc thay doi.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setSavingShopProfile(false);
+    }
+  };
+
+  // Lazy-import expo-image-picker so the module isn't loaded on screens that
+  // never invoke a picker (cheaper cold-start on profile).
+  const pickAndUpload = async (endpoint: '/profile/me/avatar' | '/profile/me/banners') => {
+    if (!accessToken) return;
+    const ImagePicker = await import('expo-image-picker');
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Can quyen', 'App can quyen truy cap thu vien anh de tai len.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: endpoint === '/profile/me/avatar',
+      aspect: endpoint === '/profile/me/avatar' ? [1, 1] : [16, 9],
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    const isAvatar = endpoint === '/profile/me/avatar';
+    if (isAvatar) setUploadingAvatar(true);
+    else setUploadingBanner(true);
+
+    try {
+      const form = new FormData();
+      const mime = asset.mimeType || 'image/jpeg';
+      const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+      const name = asset.fileName || `${isAvatar ? 'avatar' : 'banner'}-${Date.now()}.${ext}`;
+      form.append('file', { uri: asset.uri, name, type: mime } as any);
+      await api.post(endpoint, form, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      await fetchProfile();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Tai anh that bai.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      if (isAvatar) setUploadingAvatar(false);
+      else setUploadingBanner(false);
+    }
+  };
+
+  const handleRemoveBanner = async (url: string) => {
+    if (!accessToken) return;
+    setUploadingBanner(true);
+    try {
+      await api.delete('/profile/me/banners', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        data: { url },
+      });
+      await fetchProfile();
     } catch {
       // no-op
     } finally {
-      setSavingShopProfile(false);
+      setUploadingBanner(false);
     }
   };
 
@@ -611,6 +877,7 @@ export default function ProfileScreen() {
     setShopAddressInput(profile?.profile?.address || '');
     setShopDescriptionInput(profile?.profile?.description || '');
     setShopPhoneInput(profile?.phone_number || '');
+    setShopMapsUrlInput(profile?.profile?.shop_google_maps_url || '');
   }, [profile]);
 
   useFocusEffect(
@@ -648,6 +915,89 @@ export default function ProfileScreen() {
       return !sv.is_used && (!validTo || validTo >= now);
     });
   }, [savedVouchers]);
+
+  // Buyer with PENDING + MOMO + UNPAID can retry payment or fall back to COD.
+  // Mirrors web's /profile/orders/[id] page.
+  const isAwaitingMomo = useMemo(() => {
+    if (!selectedOrder || isSeller) return false;
+    if (selectedOrder.status !== 'PENDING') return false;
+    if (selectedOrder.payment_method !== 'MOMO') return false;
+    const payment = selectedOrder.payments?.[0];
+    return payment?.status === 'UNPAID';
+  }, [selectedOrder, isSeller]);
+
+  const [retryingMomo, setRetryingMomo] = useState(false);
+  const [changingMethod, setChangingMethod] = useState(false);
+
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('ALL');
+  const [orderSearchQuery, setOrderSearchQuery] = useState('');
+
+  const filteredOrders = useMemo(() => {
+    const q = orderSearchQuery.trim().toLowerCase();
+    return orders.filter((order) => {
+      if (orderStatusFilter !== 'ALL' && order.status !== orderStatusFilter) return false;
+      if (!q) return true;
+      if (order.id.toLowerCase().includes(q)) return true;
+      const buyer = order.buyer?.full_name?.toLowerCase() ?? '';
+      const seller = order.seller?.profile?.store_name?.toLowerCase() ?? '';
+      if (buyer.includes(q) || seller.includes(q)) return true;
+      return order.order_items.some((it) => it.product?.name?.toLowerCase().includes(q));
+    });
+  }, [orders, orderStatusFilter, orderSearchQuery]);
+
+  const handleRetryMomo = async () => {
+    if (!selectedOrder || !accessToken) return;
+    setRetryingMomo(true);
+    try {
+      const res = await api.post(
+        '/payments/momo/create',
+        { order_id: selectedOrder.id },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      const payUrl = res.data?.payUrl || res.data?.deeplink;
+      if (payUrl) {
+        await Linking.openURL(payUrl);
+      } else {
+        Alert.alert('Loi', 'Khong nhan duoc URL thanh toan tu MoMo.');
+      }
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? 'Khong tao lai duoc giao dich MoMo.';
+      Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setRetryingMomo(false);
+    }
+  };
+
+  const handleChangeToCod = async () => {
+    if (!selectedOrder || !accessToken) return;
+    Alert.alert(
+      'Doi sang COD?',
+      'Don hang se chuyen sang thanh toan khi nhan hang. Khong the hoan tac.',
+      [
+        { text: 'De sau', style: 'cancel' },
+        {
+          text: 'Xac nhan',
+          style: 'destructive',
+          onPress: async () => {
+            setChangingMethod(true);
+            try {
+              await api.patch(
+                `/orders/${selectedOrder.id}/change-payment-method`,
+                { payment_method: 'COD' },
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              await fetchOrders();
+            } catch (err: any) {
+              const message = err?.response?.data?.message ?? 'Khong doi duoc phuong thuc thanh toan.';
+              Alert.alert('Loi', Array.isArray(message) ? message.join(', ') : String(message));
+            } finally {
+              setChangingMethod(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const handleCancelOrder = async () => {
     if (!selectedOrder || !accessToken) return;
@@ -899,6 +1249,24 @@ export default function ProfileScreen() {
 
             <View className="h-px bg-slate-100 my-2" />
 
+            {!isSeller ? (
+              <TouchableOpacity
+                className="rounded-xl px-4 py-3 flex-row items-center"
+                onPress={() => router.push('/become-seller')}
+              >
+                <FontAwesome name="shopping-cart" size={16} color="#16A34A" />
+                <Text className="ml-3 font-bold text-lg text-emerald-700">Tro thanh nha ban hang</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity
+              className="rounded-xl px-4 py-3 flex-row items-center"
+              onPress={() => router.push('/about')}
+            >
+              <FontAwesome name="info-circle" size={16} color="#2563EB" />
+              <Text className="ml-3 font-bold text-lg text-blue-600">Thong tin & ho tro</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               className="rounded-xl px-4 py-3 flex-row items-center"
               onPress={() => {
@@ -971,6 +1339,45 @@ export default function ProfileScreen() {
                     <Text className="text-2xl font-black text-amber-800 mt-1">{Number(sellerDashboard?.activeProducts || 0)}</Text>
                   </View>
                 ) : null}
+
+                {isSeller && sellerDashboard?.revenueByMonth && sellerDashboard.revenueByMonth.length > 0 ? (
+                  <View className="mt-3 bg-white border border-slate-100 rounded-xl p-3">
+                    <Text className="text-xs font-bold text-slate-500 uppercase mb-2">Doanh thu 12 thang gan day</Text>
+                    <RevenueBarChart data={sellerDashboard.revenueByMonth} width={320} />
+                  </View>
+                ) : null}
+
+                {isSeller && sellerDashboard?.top3BestSelling && sellerDashboard.top3BestSelling.length > 0 ? (
+                  <View className="mt-3 bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                    <Text className="text-xs font-bold text-emerald-700 uppercase mb-2">Top 3 ban chay</Text>
+                    {sellerDashboard.top3BestSelling.map((p, idx) => (
+                      <View key={p.id} className="flex-row items-center py-1.5">
+                        <View className="w-6 h-6 rounded-full bg-emerald-600 items-center justify-center">
+                          <Text className="text-white text-xs font-black">{idx + 1}</Text>
+                        </View>
+                        <Text className="ml-2 flex-1 text-slate-800 font-semibold" numberOfLines={1}>{p.name}</Text>
+                        <Text className="text-xs text-emerald-700 font-bold">{p.sold} ban</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                {isSeller && sellerDashboard?.top3NeedImprovement && sellerDashboard.top3NeedImprovement.length > 0 ? (
+                  <View className="mt-3 bg-rose-50 border border-rose-100 rounded-xl p-3">
+                    <Text className="text-xs font-bold text-rose-700 uppercase mb-2">Top 3 can cai thien</Text>
+                    {sellerDashboard.top3NeedImprovement.map((p, idx) => (
+                      <View key={p.id} className="flex-row items-center py-1.5">
+                        <View className="w-6 h-6 rounded-full bg-rose-500 items-center justify-center">
+                          <Text className="text-white text-xs font-black">{idx + 1}</Text>
+                        </View>
+                        <Text className="ml-2 flex-1 text-slate-800 font-semibold" numberOfLines={1}>{p.name}</Text>
+                        <Text className="text-xs text-rose-600 font-bold">
+                          {p.avgRating !== null ? `${p.avgRating}★` : `${p.sold} ban`}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             </View>
           ) : null}
@@ -982,7 +1389,7 @@ export default function ProfileScreen() {
                   <Text className="text-slate-900 text-3xl font-black">Lich su don hang</Text>
                   <Text className="text-slate-400 mt-1">
                     {orders.length > 0
-                      ? `${orders.length} don hang`
+                      ? `${filteredOrders.length}/${orders.length} don hang`
                       : isSeller
                         ? 'Theo doi don hang tu khach mua'
                         : 'Theo doi trang thai don hang'}
@@ -990,6 +1397,52 @@ export default function ProfileScreen() {
                 </View>
                 <FontAwesome name="cube" size={18} color="#94A3B8" />
               </View>
+
+              {orders.length > 0 ? (
+                <View className="bg-white rounded-2xl border border-slate-100 p-3 mb-3">
+                  <View className="flex-row items-center border border-slate-200 rounded-xl px-3 py-2 mb-2">
+                    <FontAwesome name="search" size={13} color="#94A3B8" />
+                    <TextInput
+                      className="ml-2 flex-1 text-slate-800"
+                      value={orderSearchQuery}
+                      onChangeText={setOrderSearchQuery}
+                      placeholder={isSeller ? 'Tim theo ma don / khach / san pham' : 'Tim theo ma don / shop / san pham'}
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {orderSearchQuery.length > 0 ? (
+                      <TouchableOpacity onPress={() => setOrderSearchQuery('')}>
+                        <FontAwesome name="times-circle" size={14} color="#94A3B8" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View className="flex-row gap-2">
+                      {[
+                        { id: 'ALL', label: 'Tat ca' },
+                        { id: 'PENDING', label: 'Cho xac nhan' },
+                        { id: 'CONFIRMED', label: 'Cho van chuyen' },
+                        { id: 'SHIPPING', label: 'Dang giao' },
+                        { id: 'COMPLETED', label: 'Hoan thanh' },
+                        { id: 'CANCELLED', label: 'Da huy' },
+                        { id: 'ISSUE_REPORTED', label: 'Su co' },
+                      ].map((f) => {
+                        const active = orderStatusFilter === f.id;
+                        return (
+                          <TouchableOpacity
+                            key={f.id}
+                            onPress={() => setOrderStatusFilter(f.id)}
+                            className={`px-3 py-1.5 rounded-full border ${active ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200 bg-white'}`}
+                          >
+                            <Text className={`text-xs font-bold ${active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                              {f.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+              ) : null}
 
               {loadingOrders ? (
                 <View className="bg-white rounded-2xl border border-slate-100 py-14 items-center">
@@ -1012,8 +1465,21 @@ export default function ProfileScreen() {
                 </View>
               ) : null}
 
-              {!loadingOrders && orders.length > 0
-                ? orders.map((order) => {
+              {!loadingOrders && orders.length > 0 && filteredOrders.length === 0 ? (
+                <View className="bg-white rounded-2xl border border-slate-100 py-10 px-5 items-center">
+                  <FontAwesome name="filter" size={32} color="#CBD5E1" />
+                  <Text className="text-slate-600 font-bold mt-3">Khong co don phu hop bo loc.</Text>
+                  <TouchableOpacity
+                    className="mt-3 px-4 py-2 rounded-lg border border-slate-300"
+                    onPress={() => { setOrderStatusFilter('ALL'); setOrderSearchQuery(''); }}
+                  >
+                    <Text className="text-slate-700 font-semibold text-xs">Xoa bo loc</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              {!loadingOrders && filteredOrders.length > 0
+                ? filteredOrders.map((order) => {
                     const status = getOrderStatusUi(order.status);
                     const partnerName = isSeller
                       ? order.buyer?.full_name || 'Khach hang'
@@ -1121,20 +1587,62 @@ export default function ProfileScreen() {
                 ? sellerProducts.map((p) => (
                     <View key={p.id} className="bg-white rounded-2xl border border-slate-100 overflow-hidden mb-3">
                       <View className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex-row items-center justify-between">
-                        <Text className="font-bold text-slate-900">{p.name}</Text>
+                        <Text className="font-bold text-slate-900 flex-1" numberOfLines={1}>{p.name}</Text>
                         <View className={`px-2 py-1 rounded-full ${p.is_active ? 'bg-emerald-100' : 'bg-slate-200'}`}>
                           <Text className={`text-xs font-bold ${p.is_active ? 'text-emerald-700' : 'text-slate-600'}`}>
                             {p.is_active ? 'Dang ban' : 'Tam dung'}
                           </Text>
                         </View>
                       </View>
-                      <View className="px-4 py-3">
-                        <Text className="text-xs text-slate-500">Gia ban</Text>
-                        <Text className="text-[#16A34A] font-black text-2xl mt-1">{formatPrice(Number(p.price || 0))}</Text>
-                        <View className="flex-row items-center justify-between mt-2">
-                          <Text className="text-xs text-slate-500">Ton kho: {Number(p.stock || 0)} {p.unit || 'kg'}</Text>
-                          <Text className="text-xs text-slate-500">Da ban: {Number(p.sold || 0)}</Text>
+                      <View className="px-4 py-3 flex-row">
+                        {p.images?.[0] ? (
+                          <Image source={{ uri: resolveImageUrl(p.images[0]) }} className="w-16 h-16 rounded-xl mr-3 bg-slate-100" />
+                        ) : (
+                          <View className="w-16 h-16 rounded-xl bg-slate-100 mr-3 items-center justify-center">
+                            <FontAwesome name="leaf" size={20} color="#94A3B8" />
+                          </View>
+                        )}
+                        <View className="flex-1">
+                          <Text className="text-xs text-slate-500">Gia ban</Text>
+                          <Text className="text-[#16A34A] font-black text-xl">{formatPrice(Number(p.price || 0))}</Text>
+                          <View className="flex-row items-center justify-between mt-1">
+                            <Text className="text-xs text-slate-500">Ton: {Number(p.stock || 0)} {p.unit || 'kg'}</Text>
+                            <Text className="text-xs text-slate-500">Da ban: {Number(p.sold || 0)}</Text>
+                          </View>
                         </View>
+                      </View>
+
+                      <View className="px-3 py-2 border-t border-slate-100 flex-row gap-2 flex-wrap">
+                        <TouchableOpacity
+                          className="px-3 py-2 rounded-lg border border-blue-300 bg-blue-50"
+                          onPress={() => { setEditingProduct({ ...p }); setEditProductImages([]); }}
+                          disabled={productActionId === p.id}
+                        >
+                          <Text className="text-blue-700 text-xs font-bold">Sua</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          className="px-3 py-2 rounded-lg border border-amber-300 bg-amber-50"
+                          onPress={() => setRestockModalVisible({ product: p, delta: '' })}
+                          disabled={productActionId === p.id}
+                        >
+                          <Text className="text-amber-700 text-xs font-bold">Nhap kho</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          className={`px-3 py-2 rounded-lg border ${p.is_active ? 'border-slate-300 bg-slate-50' : 'border-emerald-300 bg-emerald-50'}`}
+                          onPress={() => handleToggleProductStatus(p)}
+                          disabled={productActionId === p.id}
+                        >
+                          <Text className={`text-xs font-bold ${p.is_active ? 'text-slate-700' : 'text-emerald-700'}`}>
+                            {p.is_active ? 'Tam dung' : 'Kich hoat'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          className="px-3 py-2 rounded-lg border border-red-300 bg-red-50 ml-auto"
+                          onPress={() => handleDeleteProduct(p)}
+                          disabled={productActionId === p.id}
+                        >
+                          <Text className="text-red-600 text-xs font-bold">Xoa</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   ))
@@ -1226,6 +1734,32 @@ export default function ProfileScreen() {
                   placeholder="VD: Da Lat"
                   placeholderTextColor="#94A3B8"
                 />
+
+                <Text className="text-xs font-bold text-slate-500 mb-2">Anh san pham (toi da 5)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                  <View className="flex-row gap-2">
+                    {newProductImages.map((img, idx) => (
+                      <View key={`${img.uri}-${idx}`} className="relative">
+                        <Image source={{ uri: img.uri }} className="w-20 h-20 rounded-xl bg-slate-100" />
+                        <TouchableOpacity
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 items-center justify-center"
+                          onPress={() => setNewProductImages((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <FontAwesome name="times" size={11} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {newProductImages.length < 5 ? (
+                      <TouchableOpacity
+                        className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 items-center justify-center bg-slate-50"
+                        onPress={() => void pickProductImages('create')}
+                      >
+                        <FontAwesome name="camera" size={18} color="#94A3B8" />
+                        <Text className="text-[10px] text-slate-500 mt-1">Them anh</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </ScrollView>
 
                 <TouchableOpacity
                   className={`rounded-xl py-3 items-center ${creatingProduct || !newProductName.trim() || !newProductPrice.trim() || !newProductStock.trim() ? 'bg-slate-300' : 'bg-emerald-600'}`}
@@ -1482,6 +2016,59 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               </View>
 
+              <View className="bg-white rounded-2xl border border-slate-100 p-4 mb-3">
+                <Text className="text-xs font-bold text-slate-500 mb-2">Anh dai dien shop</Text>
+                <View className="flex-row items-center">
+                  <View className="w-20 h-20 rounded-full bg-slate-100 items-center justify-center overflow-hidden">
+                    {profile?.avatar ? (
+                      <Image source={{ uri: resolveImageUrl(profile.avatar) }} className="w-full h-full" />
+                    ) : (
+                      <FontAwesome name="user" size={28} color="#94A3B8" />
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    className={`ml-4 px-4 py-2 rounded-xl ${uploadingAvatar ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                    onPress={() => void pickAndUpload('/profile/me/avatar')}
+                    disabled={uploadingAvatar}
+                  >
+                    <Text className="text-white font-bold text-xs">{uploadingAvatar ? 'Dang tai...' : 'Doi avatar'}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View className="h-px bg-slate-100 my-4" />
+
+                <Text className="text-xs font-bold text-slate-500 mb-2">Banner gian hang (toi da 3 anh)</Text>
+                {profile?.profile?.banners1 && profile.profile.banners1.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+                    <View className="flex-row gap-2">
+                      {profile.profile.banners1.map((b) => (
+                        <View key={b} className="relative">
+                          <Image source={{ uri: resolveImageUrl(b) }} className="w-40 h-24 rounded-xl bg-slate-100" />
+                          <TouchableOpacity
+                            className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/60 items-center justify-center"
+                            onPress={() => void handleRemoveBanner(b)}
+                          >
+                            <FontAwesome name="trash" size={12} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+                ) : (
+                  <Text className="text-xs text-slate-400 mb-2">Chua co banner nao.</Text>
+                )}
+
+                <TouchableOpacity
+                  className={`rounded-xl py-2.5 items-center border border-dashed ${uploadingBanner ? 'bg-slate-100 border-slate-200' : 'bg-emerald-50 border-emerald-300'} ${(profile?.profile?.banners1?.length ?? 0) >= 3 ? 'opacity-50' : ''}`}
+                  onPress={() => void pickAndUpload('/profile/me/banners')}
+                  disabled={uploadingBanner || (profile?.profile?.banners1?.length ?? 0) >= 3}
+                >
+                  <Text className="text-emerald-700 font-bold text-xs">
+                    {uploadingBanner ? 'Dang tai...' : (profile?.profile?.banners1?.length ?? 0) >= 3 ? 'Da dat gioi han 3 banner' : '+ Them banner moi'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <View className="bg-white rounded-2xl border border-slate-100 p-4">
                 <Text className="text-xs font-bold text-slate-500 mb-1">Ten gian hang</Text>
                 <TextInput
@@ -1499,6 +2086,17 @@ export default function ProfileScreen() {
                   onChangeText={setShopAddressInput}
                   placeholder="VD: TP. Da Lat, Lam Dong"
                   placeholderTextColor="#94A3B8"
+                />
+
+                <Text className="text-xs font-bold text-slate-500 mb-1">Link Google Maps (tuy chon)</Text>
+                <TextInput
+                  className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                  value={shopMapsUrlInput}
+                  onChangeText={setShopMapsUrlInput}
+                  placeholder="https://www.google.com/maps/... hoac https://maps.app.goo.gl/..."
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
 
                 <Text className="text-xs font-bold text-slate-500 mb-1">So dien thoai lien he</Text>
@@ -1644,6 +2242,41 @@ export default function ProfileScreen() {
                   {selectedOrder?.order_items.length || 0} san pham
                 </Text>
               </View>
+
+              {isAwaitingMomo ? (
+                <View className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-2">
+                  <View className="flex-row items-start mb-2">
+                    <FontAwesome name="exclamation-circle" size={16} color="#D97706" />
+                    <View className="ml-2 flex-1">
+                      <Text className="text-amber-900 font-bold text-sm">Don dang cho thanh toan</Text>
+                      <Text className="text-amber-700 text-xs mt-1">
+                        Ban da chon MoMo nhung giao dich chua hoan tat. Bam "Thanh toan" de thu lai,
+                        hoac doi sang COD. Don se tu huy sau 24h.
+                      </Text>
+                    </View>
+                  </View>
+                  <View className="flex-row gap-2 mt-1">
+                    <TouchableOpacity
+                      className={`flex-1 rounded-xl py-3 items-center ${retryingMomo ? 'bg-slate-300' : 'bg-pink-600'}`}
+                      onPress={handleRetryMomo}
+                      disabled={retryingMomo || changingMethod}
+                    >
+                      <Text className="text-white font-bold text-xs">
+                        {retryingMomo ? 'Dang mo MoMo...' : 'Thanh toan'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      className={`flex-1 rounded-xl py-3 items-center border ${changingMethod ? 'bg-slate-100 border-slate-200' : 'bg-white border-slate-300'}`}
+                      onPress={handleChangeToCod}
+                      disabled={retryingMomo || changingMethod}
+                    >
+                      <Text className={`font-bold text-xs ${changingMethod ? 'text-slate-500' : 'text-slate-700'}`}>
+                        {changingMethod ? 'Dang doi...' : 'Doi sang COD'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
 
               {!isSeller && selectedOrder?.status === 'PENDING' ? (
                 <TouchableOpacity
@@ -2118,6 +2751,170 @@ export default function ProfileScreen() {
             >
               <Text className="text-white font-bold">{creatingVoucher ? 'Dang tao...' : 'Tao voucher'}</Text>
             </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={!!editingProduct} transparent animationType="slide" onRequestClose={() => setEditingProduct(null)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setEditingProduct(null)}
+          className="flex-1 bg-black/50 justify-end"
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} className="bg-white rounded-t-3xl p-4 pb-8 max-h-[85%]">
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View className="flex-row items-center justify-between mb-4">
+                <Text className="text-slate-900 text-lg font-black">Sua san pham</Text>
+                <TouchableOpacity onPress={() => setEditingProduct(null)}>
+                  <FontAwesome name="close" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              {editingProduct ? (
+                <>
+                  <Text className="text-xs font-bold text-slate-500 mb-1">Ten san pham</Text>
+                  <TextInput
+                    className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                    value={editingProduct.name}
+                    onChangeText={(t) => setEditingProduct({ ...editingProduct, name: t })}
+                  />
+
+                  <View className="flex-row gap-2">
+                    <View className="flex-1">
+                      <Text className="text-xs font-bold text-slate-500 mb-1">Gia ban</Text>
+                      <TextInput
+                        className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                        value={String(editingProduct.price || '')}
+                        onChangeText={(t) => setEditingProduct({ ...editingProduct, price: Number(t) || 0 })}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-xs font-bold text-slate-500 mb-1">Ton kho</Text>
+                      <TextInput
+                        className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                        value={String(editingProduct.stock || '')}
+                        onChangeText={(t) => setEditingProduct({ ...editingProduct, stock: Number(t) || 0 })}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  </View>
+
+                  <View className="flex-row gap-2">
+                    <View className="flex-1">
+                      <Text className="text-xs font-bold text-slate-500 mb-1">Don vi</Text>
+                      <TextInput
+                        className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                        value={editingProduct.unit || ''}
+                        onChangeText={(t) => setEditingProduct({ ...editingProduct, unit: t })}
+                      />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc</Text>
+                      <TextInput
+                        className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                        value={editingProduct.category || ''}
+                        onChangeText={(t) => setEditingProduct({ ...editingProduct, category: t })}
+                      />
+                    </View>
+                  </View>
+
+                  <Text className="text-xs font-bold text-slate-500 mb-1">Xuat xu</Text>
+                  <TextInput
+                    className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
+                    value={editingProduct.origin || ''}
+                    onChangeText={(t) => setEditingProduct({ ...editingProduct, origin: t })}
+                  />
+
+                  <Text className="text-xs font-bold text-slate-500 mb-2">Anh hien co</Text>
+                  {editingProduct.images && editingProduct.images.length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+                      <View className="flex-row gap-2">
+                        {editingProduct.images.map((url, i) => (
+                          <Image key={`${url}-${i}`} source={{ uri: resolveImageUrl(url) }} className="w-20 h-20 rounded-xl bg-slate-100" />
+                        ))}
+                      </View>
+                    </ScrollView>
+                  ) : (
+                    <Text className="text-xs text-slate-400 mb-2">Chua co anh.</Text>
+                  )}
+
+                  <Text className="text-xs font-bold text-slate-500 mb-2 mt-2">Anh moi them</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                    <View className="flex-row gap-2">
+                      {editProductImages.map((img, idx) => (
+                        <View key={`${img.uri}-${idx}`} className="relative">
+                          <Image source={{ uri: img.uri }} className="w-20 h-20 rounded-xl bg-slate-100" />
+                          <TouchableOpacity
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 items-center justify-center"
+                            onPress={() => setEditProductImages((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            <FontAwesome name="times" size={11} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      {editProductImages.length < 5 ? (
+                        <TouchableOpacity
+                          className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 items-center justify-center bg-slate-50"
+                          onPress={() => void pickProductImages('edit')}
+                        >
+                          <FontAwesome name="camera" size={18} color="#94A3B8" />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </ScrollView>
+
+                  <TouchableOpacity
+                    className={`rounded-xl py-3 items-center mt-2 ${savingEditProduct ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                    onPress={handleSaveEditProduct}
+                    disabled={savingEditProduct}
+                  >
+                    <Text className="text-white font-bold">{savingEditProduct ? 'Dang luu...' : 'Luu thay doi'}</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={!!restockModalVisible} transparent animationType="slide" onRequestClose={() => setRestockModalVisible(null)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setRestockModalVisible(null)}
+          className="flex-1 bg-black/50 justify-center px-4"
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} className="bg-white rounded-2xl p-4">
+            <View className="flex-row items-center justify-between mb-3">
+              <Text className="text-slate-900 text-lg font-black">Cap nhat ton kho</Text>
+              <TouchableOpacity onPress={() => setRestockModalVisible(null)}>
+                <FontAwesome name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            {restockModalVisible ? (
+              <>
+                <Text className="text-sm text-slate-700 font-semibold" numberOfLines={1}>{restockModalVisible.product.name}</Text>
+                <Text className="text-xs text-slate-500 mt-1">
+                  Ton kho hien tai: {Number(restockModalVisible.product.stock || 0)} {restockModalVisible.product.unit || 'kg'}
+                </Text>
+                <Text className="text-xs font-bold text-slate-500 mt-3 mb-1">So luong them (dung so am de tru)</Text>
+                <TextInput
+                  className="border border-slate-200 rounded-xl px-3 py-3 mb-1 text-slate-800"
+                  value={restockModalVisible.delta}
+                  onChangeText={(t) => setRestockModalVisible({ ...restockModalVisible, delta: t })}
+                  keyboardType="numbers-and-punctuation"
+                  placeholder="VD: 50 hoac -10"
+                  placeholderTextColor="#94A3B8"
+                />
+                <TouchableOpacity
+                  className={`mt-3 rounded-xl py-3 items-center ${restocking ? 'bg-slate-300' : 'bg-amber-500'}`}
+                  onPress={handleRestockProduct}
+                  disabled={restocking}
+                >
+                  <Text className="text-white font-bold">{restocking ? 'Dang cap nhat...' : 'Cap nhat'}</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
