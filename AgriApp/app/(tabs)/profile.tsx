@@ -108,11 +108,14 @@ type SellerProduct = {
   stock: number;
   unit?: string;
   category?: string;
+  category_id?: number;
   origin?: string;
   images?: string[];
   is_active?: boolean;
   sold?: number;
 };
+
+type CategoryOption = { id: number; name: string };
 
 type SellerDashboard = {
   totalRevenue?: number;
@@ -311,7 +314,8 @@ export default function ProfileScreen() {
   const [newProductPrice, setNewProductPrice] = useState('');
   const [newProductStock, setNewProductStock] = useState('');
   const [newProductUnit, setNewProductUnit] = useState('kg');
-  const [newProductCategory, setNewProductCategory] = useState('khac');
+  const [newProductCategoryId, setNewProductCategoryId] = useState<number | null>(null);
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [newProductOrigin, setNewProductOrigin] = useState('');
   const [newProductDescription, setNewProductDescription] = useState('');
   const [newProductImages, setNewProductImages] = useState<{ uri: string; mimeType?: string | null; fileName?: string | null }[]>([]);
@@ -510,17 +514,21 @@ export default function ProfileScreen() {
 
   const handleCreateProduct = async () => {
     if (!accessToken || !newProductName.trim() || !newProductPrice.trim() || !newProductStock.trim()) return;
+    if (newProductCategoryId == null) {
+      Alert.alert('Loi', 'Vui long chon danh muc cho san pham.');
+      return;
+    }
 
     setCreatingProduct(true);
     try {
       const form = buildProductFormData(
         {
           name: newProductName.trim(),
-          price: Number(newProductPrice),
-          stock: Number(newProductStock),
+          reference_price: Number(newProductPrice),
+          stock_quantity: Number(newProductStock),
           unit: newProductUnit.trim() || 'kg',
-          category: newProductCategory.trim() || 'khac',
-          origin: newProductOrigin.trim() || undefined,
+          category_id: newProductCategoryId,
+          location: newProductOrigin.trim() || undefined,
           description: newProductDescription.trim() || undefined,
         },
         newProductImages,
@@ -537,7 +545,7 @@ export default function ProfileScreen() {
       setNewProductPrice('');
       setNewProductStock('');
       setNewProductUnit('kg');
-      setNewProductCategory('khac');
+      setNewProductCategoryId(categoryOptions[0]?.id ?? null);
       setNewProductOrigin('');
       setNewProductDescription('');
       setNewProductImages([]);
@@ -556,11 +564,11 @@ export default function ProfileScreen() {
       const form = buildProductFormData(
         {
           name: editingProduct.name.trim() || undefined,
-          price: Number(editingProduct.price) || undefined,
-          stock: Number(editingProduct.stock) || undefined,
+          reference_price: Number(editingProduct.price) || undefined,
+          stock_quantity: Number(editingProduct.stock) || undefined,
           unit: editingProduct.unit?.trim() || undefined,
-          category: editingProduct.category?.trim() || undefined,
-          origin: editingProduct.origin?.trim() || undefined,
+          category_id: editingProduct.category_id,
+          location: editingProduct.origin?.trim() || undefined,
         },
         editProductImages,
       );
@@ -815,6 +823,21 @@ export default function ProfileScreen() {
       setReplyingReview(false);
     }
   };
+
+  // Fetch product categories once so the create/edit modals can populate their
+  // chip pickers with real DB ids (BE no longer accepts slug aliases).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<CategoryOption[]>('/products/categories')
+      .then((res) => {
+        if (cancelled) return;
+        setCategoryOptions(res.data);
+        setNewProductCategoryId((prev) => prev ?? res.data[0]?.id ?? null);
+      })
+      .catch(() => { /* dropdown stays empty; submit-time guard catches it */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!user || !accessToken) {
@@ -1714,17 +1737,30 @@ export default function ProfileScreen() {
                       placeholderTextColor="#94A3B8"
                     />
                   </View>
-                  <View className="flex-1">
-                    <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc</Text>
-                    <TextInput
-                      className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
-                      value={newProductCategory}
-                      onChangeText={setNewProductCategory}
-                      placeholder="trai-cay | rau-cu | ngu-coc | gia-vi | khac"
-                      placeholderTextColor="#94A3B8"
-                    />
-                  </View>
+                  <View className="flex-1" />
                 </View>
+
+                <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc *</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                  <View className="flex-row gap-2">
+                    {categoryOptions.length === 0 ? (
+                      <Text className="text-xs text-slate-400 py-2">Dang tai danh muc...</Text>
+                    ) : (
+                      categoryOptions.map((c) => {
+                        const selected = newProductCategoryId === c.id;
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            onPress={() => setNewProductCategoryId(c.id)}
+                            className={`px-3 py-2 rounded-full border ${selected ? 'bg-emerald-600 border-emerald-600' : 'bg-white border-slate-200'}`}
+                          >
+                            <Text className={`text-xs font-semibold ${selected ? 'text-white' : 'text-slate-700'}`}>{c.name}</Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </View>
+                </ScrollView>
 
                 <Text className="text-xs font-bold text-slate-500 mb-1">Xuat xu</Text>
                 <TextInput
@@ -2598,17 +2634,30 @@ export default function ProfileScreen() {
                     placeholderTextColor="#94A3B8"
                   />
                 </View>
-                <View className="flex-1">
-                  <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc</Text>
-                  <TextInput
-                    className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
-                    value={newProductCategory}
-                    onChangeText={setNewProductCategory}
-                    placeholder="khac"
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
+                <View className="flex-1" />
               </View>
+
+              <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc *</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                <View className="flex-row gap-2">
+                  {categoryOptions.length === 0 ? (
+                    <Text className="text-xs text-slate-400 py-2">Dang tai danh muc...</Text>
+                  ) : (
+                    categoryOptions.map((c) => {
+                      const selected = newProductCategoryId === c.id;
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          onPress={() => setNewProductCategoryId(c.id)}
+                          className={`px-3 py-2 rounded-full border ${selected ? 'bg-emerald-600 border-emerald-600' : 'bg-white border-slate-200'}`}
+                        >
+                          <Text className={`text-xs font-semibold ${selected ? 'text-white' : 'text-slate-700'}`}>{c.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </View>
+              </ScrollView>
 
               <Text className="text-xs font-bold text-slate-500 mb-1">Xuat xu</Text>
               <TextInput
@@ -2809,15 +2858,30 @@ export default function ProfileScreen() {
                         onChangeText={(t) => setEditingProduct({ ...editingProduct, unit: t })}
                       />
                     </View>
-                    <View className="flex-1">
-                      <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc</Text>
-                      <TextInput
-                        className="border border-slate-200 rounded-xl px-3 py-3 mb-3 text-slate-800"
-                        value={editingProduct.category || ''}
-                        onChangeText={(t) => setEditingProduct({ ...editingProduct, category: t })}
-                      />
-                    </View>
+                    <View className="flex-1" />
                   </View>
+
+                  <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                    <View className="flex-row gap-2">
+                      {categoryOptions.length === 0 ? (
+                        <Text className="text-xs text-slate-400 py-2">Dang tai danh muc...</Text>
+                      ) : (
+                        categoryOptions.map((c) => {
+                          const selected = editingProduct.category_id === c.id;
+                          return (
+                            <TouchableOpacity
+                              key={c.id}
+                              onPress={() => setEditingProduct({ ...editingProduct, category_id: c.id, category: c.name })}
+                              className={`px-3 py-2 rounded-full border ${selected ? 'bg-emerald-600 border-emerald-600' : 'bg-white border-slate-200'}`}
+                            >
+                              <Text className={`text-xs font-semibold ${selected ? 'text-white' : 'text-slate-700'}`}>{c.name}</Text>
+                            </TouchableOpacity>
+                          );
+                        })
+                      )}
+                    </View>
+                  </ScrollView>
 
                   <Text className="text-xs font-bold text-slate-500 mb-1">Xuat xu</Text>
                   <TextInput

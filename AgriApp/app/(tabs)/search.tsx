@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Alert, FlatList, Image, ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -38,8 +38,11 @@ type SellerProduct = {
   description?: string;
   images?: string[];
   category?: string;
+  category_id?: number;
   origin?: string;
 };
+
+type CategoryOption = { id: number; name: string };
 
 type ProductFormMode = 'create' | 'edit';
 type SellerFilter = 'ALL' | 'ACTIVE' | 'OUT_OF_STOCK';
@@ -74,7 +77,8 @@ export default function SearchScreen() {
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('');
   const [unit, setUnit] = useState('kg');
-  const [category, setCategory] = useState('khac');
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [origin, setOrigin] = useState('');
   const [description, setDescription] = useState('');
   const [imageUrlInput, setImageUrlInput] = useState('');
@@ -95,13 +99,28 @@ export default function SearchScreen() {
     setPrice('');
     setStock('');
     setUnit('kg');
-    setCategory('khac');
+    setCategoryId(categoryOptions[0]?.id ?? null);
     setOrigin('');
     setDescription('');
     setImageUrlInput('');
     setSelectedImageUri('');
     setSelectedImageSource(null);
   };
+
+  // Fetch category list once so the create/edit modal can pick a real DB id
+  // (BE no longer maps slug aliases to category_id).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<CategoryOption[]>('/products/categories')
+      .then((res) => {
+        if (cancelled) return;
+        setCategoryOptions(res.data);
+        setCategoryId((prev) => prev ?? res.data[0]?.id ?? null);
+      })
+      .catch(() => { /* dropdown stays empty; submit-time guard catches it */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const fetchSellerProducts = useCallback(async () => {
     if (!isSeller || !accessToken) return;
@@ -204,7 +223,7 @@ export default function SearchScreen() {
     setPrice(String(product.price ?? ''));
     setStock(String(product.stock ?? ''));
     setUnit(product.unit || 'kg');
-    setCategory(product.category || 'khac');
+    setCategoryId(product.category_id ?? categoryOptions[0]?.id ?? null);
     setOrigin(product.origin || '');
     setDescription(product.description || '');
 
@@ -217,16 +236,20 @@ export default function SearchScreen() {
 
   const submitProduct = async () => {
     if (!accessToken || !name.trim() || !price.trim() || !stock.trim()) return;
+    if (categoryId == null) {
+      Alert.alert('Loi', 'Vui long chon danh muc cho san pham.');
+      return;
+    }
     setCreatingProduct(true);
 
     try {
       const form = new FormData();
       form.append('name', name.trim());
-      form.append('price', String(Number(price)));
-      form.append('stock', String(Number(stock)));
+      form.append('reference_price', String(Number(price)));
+      form.append('stock_quantity', String(Number(stock)));
       form.append('unit', unit.trim() || 'kg');
-      form.append('category', category.trim() || 'khac');
-      if (origin.trim()) form.append('origin', origin.trim());
+      form.append('category_id', String(categoryId));
+      if (origin.trim()) form.append('location', origin.trim());
       if (description.trim()) form.append('description', description.trim());
 
       if (selectedImageSource === 'url') {
@@ -631,8 +654,29 @@ export default function SearchScreen() {
               </View>
               <View className="flex-row gap-2 mb-3">
                 <TextInput className="flex-1 border border-slate-200 rounded-xl px-3 py-3" placeholder="Don vi" value={unit} onChangeText={setUnit} />
-                <TextInput className="flex-1 border border-slate-200 rounded-xl px-3 py-3" placeholder="Danh muc" value={category} onChangeText={setCategory} />
+                <View className="flex-1" />
               </View>
+              <Text className="text-xs font-bold text-slate-500 mb-1">Danh muc *</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                <View className="flex-row gap-2">
+                  {categoryOptions.length === 0 ? (
+                    <Text className="text-xs text-slate-400 py-2">Dang tai danh muc...</Text>
+                  ) : (
+                    categoryOptions.map((c) => {
+                      const selected = categoryId === c.id;
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          onPress={() => setCategoryId(c.id)}
+                          className={`px-3 py-2 rounded-full border ${selected ? 'bg-emerald-600 border-emerald-600' : 'bg-white border-slate-200'}`}
+                        >
+                          <Text className={`text-xs font-semibold ${selected ? 'text-white' : 'text-slate-700'}`}>{c.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </View>
+              </ScrollView>
               <TextInput className="border border-slate-200 rounded-xl px-3 py-3 mb-4" placeholder="Xuat xu" value={origin} onChangeText={setOrigin} />
               <TouchableOpacity className={`rounded-xl py-3 items-center ${creatingProduct || !name.trim() || !price.trim() || !stock.trim() ? 'bg-slate-300' : 'bg-emerald-600'}`} onPress={handleConfirmSaveProduct} disabled={creatingProduct || !name.trim() || !price.trim() || !stock.trim()}>
                 <Text className="text-white font-bold">
