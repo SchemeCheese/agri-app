@@ -496,6 +496,42 @@ export default function ChatTabScreen() {
   const handleBuyerQuoteAction = async (messageId: string, action: 'ACCEPTED' | 'REJECTED') => {
     if (!accessToken || !selectedConversationId) return;
 
+    // ── Chấp nhận báo giá → điều hướng sang Checkout (chế độ báo giá) ─────────
+    // KHÔNG gọi respondToQuote ở đây: BE yêu cầu báo giá còn PENDING khi gọi
+    // /orders/checkout-quote (chính endpoint này mới là đường chốt báo giá thật
+    // — tự set ACCEPTED và tạo đơn). Gọi respondToQuote trước sẽ làm checkout-quote
+    // báo "đã xử lý rồi".
+    if (action === 'ACCEPTED') {
+      const quoteMessage = messages.find((item) => item.id === messageId);
+      const quote = quoteMessage?.quote;
+      if (!quote?.productId || Number(quote.quantity || 0) <= 0 || Number(quote.price || 0) <= 0) {
+        Alert.alert('Khong hop le', 'Bao gia thieu thong tin de dat hang.');
+        return;
+      }
+
+      // Ảnh sản phẩm — lấy từ tin nhắn yêu cầu thương lượng tương ứng (giống render).
+      const quoteImage =
+        messages.find(
+          (item) => item.context_product?.id === quote.productId && item.context_product?.image,
+        )?.context_product?.image ?? '';
+
+      router.push({
+        pathname: '/checkout',
+        params: {
+          quoteId: messageId,
+          productId: quote.productId,
+          productName: quote.productName ?? 'San pham',
+          quantity: String(quote.quantity ?? 0),
+          negotiatedPrice: String(quote.price ?? 0),
+          unit: quote.unit ?? 'kg',
+          sellerId: quoteMessage?.sender?.id ?? '',
+          sellerName: selectedConversation?.partner?.full_name ?? 'Shop',
+          image: quoteImage,
+        },
+      });
+      return;
+    }
+
     setProcessingQuoteMessageId(messageId);
     try {
       await respondToQuote(accessToken, {

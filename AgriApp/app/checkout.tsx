@@ -24,6 +24,18 @@ import { resolveImageUrl } from '@/utils/image';
 
 type PaymentMethod = 'COD' | 'MOMO';
 
+/** Dòng sản phẩm đã chuẩn hoá — dùng chung cho cả checkout giỏ hàng lẫn checkout từ báo giá. */
+type CheckoutLineItem = {
+  productId: string;
+  name: string;
+  quantity: number;
+  price: number;
+  unit: string;
+  image?: string;
+  shopId: string;
+  shopName: string;
+};
+
 type ShopVoucherState = {
   inputCode: string;
   code: string;
@@ -50,8 +62,23 @@ const getDefaultVoucherState = (): ShopVoucherState => ({
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ ids?: string }>();
+  const params = useLocalSearchParams<{
+    ids?: string;
+    // ── Tham số chế độ báo giá (điều hướng từ chat khi buyer chấp nhận báo giá) ──
+    quoteId?: string;
+    productId?: string;
+    productName?: string;
+    quantity?: string;
+    negotiatedPrice?: string;
+    unit?: string;
+    sellerId?: string;
+    sellerName?: string;
+    image?: string;
+  }>();
   const ids = params.ids?.split(',').filter(Boolean) ?? [];
+
+  // Chế độ báo giá: đặt hàng cho 1 món đã thương lượng giá (gọi /orders/checkout-quote).
+  const isQuoteMode = Boolean(params.quoteId);
 
   const { cartItems } = useCartSummary();
   const removeItems = useCartStore((state) => state.removeItems);
@@ -75,7 +102,8 @@ export default function CheckoutScreen() {
   }, [user]);
 
   useEffect(() => {
-    if (!user || !accessToken || user.role !== 'BUYER') return;
+    // Voucher chỉ áp dụng cho checkout giỏ hàng. Báo giá đã chốt giá nên bỏ qua.
+    if (isQuoteMode || !user || !accessToken || user.role !== 'BUYER') return;
 
     api
       .get<SavedVoucher[]>('/vouchers/saved', {
@@ -83,40 +111,62 @@ export default function CheckoutScreen() {
       })
       .then((res) => setSavedVouchers(Array.isArray(res.data) ? res.data : []))
       .catch(() => setSavedVouchers([]));
-  }, [accessToken, user]);
+  }, [accessToken, user, isQuoteMode]);
 
-  const selectedItems = useMemo(
-    () => cartItems.filter((item) => ids.includes(item.product.id)),
-    [cartItems, ids],
-  );
+  // ── Danh sách dòng hàng đã chuẩn hoá ──────────────────────────────────────
+  const lineItems: CheckoutLineItem[] = useMemo(() => {
+    if (isQuoteMode) {
+      return [
+        {
+          productId: params.productId ?? '',
+          name: params.productName ?? 'San pham',
+          quantity: Number(params.quantity ?? 0),
+          price: Number(params.negotiatedPrice ?? 0),
+          unit: params.unit ?? 'kg',
+          image: params.image || undefined,
+          shopId: params.sellerId ?? 'unknown',
+          shopName: params.sellerName ?? 'Shop',
+        },
+      ];
+    }
+
+    return cartItems
+      .filter((item) => ids.includes(item.product.id))
+      .map((item) => ({
+        productId: item.product.id,
+        name: item.product.name,
+        quantity: item.quantity,
+        price: item.product.price ?? 0,
+        unit: item.product.unit ?? 'kg',
+        image: item.product.images?.[0],
+        shopId: item.product.shop?.id ?? item.product.seller_id ?? 'unknown',
+        shopName: item.product.shop?.store_name ?? 'Shop',
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQuoteMode, params.productId, params.productName, params.quantity, params.negotiatedPrice, params.unit, params.image, params.sellerId, params.sellerName, cartItems, ids.join(',')]);
 
   const shopGroups = useMemo(() => {
-    return selectedItems.reduce<Record<string, typeof selectedItems>>((acc, item) => {
-      const shopId = item.product.shop?.id ?? item.product.seller_id ?? 'unknown';
-      if (!acc[shopId]) acc[shopId] = [];
-      acc[shopId].push(item);
+    return lineItems.reduce<Record<string, CheckoutLineItem[]>>((acc, item) => {
+      if (!acc[item.shopId]) acc[item.shopId] = [];
+      acc[item.shopId].push(item);
       return acc;
     }, {});
-  }, [selectedItems]);
+  }, [lineItems]);
 
   const subtotalByShop = useMemo(() => {
     return Object.fromEntries(
       Object.entries(shopGroups).map(([shopId, items]) => [
         shopId,
-        items.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0),
+        items.reduce((sum, item) => sum + item.price * item.quantity, 0),
       ]),
     ) as Record<string, number>;
   }, [shopGroups]);
 
-  const totalPrice = selectedItems.reduce(
-    (sum, item) => sum + (item.product.price ?? 0) * item.quantity,
-    0,
-  );
+  const totalPrice = lineItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const totalDiscount = Object.entries(voucherByShop).reduce(
-    (sum, [, state]) => sum + (state.discountAmount ?? 0),
-    0,
-  );
+  const totalDiscount = isQuoteMode
+    ? 0
+    : Object.entries(voucherByShop).reduce((sum, [, state]) => sum + (state.discountAmount ?? 0), 0);
 
   const finalTotal = Math.max(0, totalPrice - totalDiscount);
 
@@ -124,18 +174,18 @@ export default function CheckoutScreen() {
     return Object.entries(shopGroups).map(([shopId, items]) => {
       const subtotal = subtotalByShop[shopId] ?? 0;
       const discount = voucherByShop[shopId]?.discountAmount ?? 0;
-      const shopName = items[0]?.product.shop?.store_name ?? 'Shop';
+      const shopName = items[0]?.shopName ?? 'Shop';
 
       return {
         seller_id: shopId,
         seller_name: shopName,
         items: items.map((item) => ({
-          product_id: item.product.id,
-          product_name: item.product.name,
+          product_id: item.productId,
+          product_name: item.name,
           quantity: item.quantity,
-          price: item.product.price ?? 0,
+          price: item.price,
           shop_name: shopName,
-          image: item.product.images?.[0],
+          image: item.image,
         })),
         subtotal,
         discount,
@@ -259,7 +309,7 @@ export default function CheckoutScreen() {
       return;
     }
 
-    if (selectedItems.length === 0) {
+    if (lineItems.length === 0) {
       Alert.alert('Thong bao', 'Khong co san pham duoc chon de thanh toan.');
       return;
     }
@@ -278,43 +328,74 @@ export default function CheckoutScreen() {
       return;
     }
 
-    const sellerOrders = Object.entries(shopGroups).map(([shopId, items]) => ({
-      seller_id: shopId,
-      items: items.map((item) => ({
-        product_id: item.product.id,
-        quantity: item.quantity,
-        price: item.product.price ?? 0,
-      })),
-      voucher_code: voucherByShop[shopId]?.code || undefined,
-    }));
+    const composedAddress = `${fullName.trim()} - ${phone.trim()} | ${shippingAddress.trim()}`;
 
     setSubmitting(true);
     try {
-      const checkoutResponse = await api.post(
-        '/orders/checkout',
-        {
-          shipping_address: `${fullName.trim()} - ${phone.trim()} | ${shippingAddress.trim()}`,
-          payment_method: paymentMethod,
-          note: note.trim() || undefined,
-          seller_orders: sellerOrders,
-        },
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
+      let orderIds: string[] = [];
+      let payUrl: string | undefined;
 
-      const orderIds: string[] = checkoutResponse.data?.order_ids ?? [];
-
-      if (paymentMethod === 'MOMO' && orderIds.length > 0) {
-        const momoRes = await api.post(
-          '/payments/momo/create',
-          { order_id: orderIds[0] },
+      if (isQuoteMode) {
+        // ── Đặt hàng từ báo giá đã thương lượng ──────────────────────────────
+        // BE tự chốt báo giá (PENDING → ACCEPTED) và tạo đơn trong 1 lần gọi.
+        const checkoutResponse = await api.post(
+          '/orders/checkout-quote',
+          {
+            quoteId: params.quoteId,
+            paymentMethod,
+            shippingAddress: composedAddress,
+            phoneNumber: phone.trim(),
+            note: note.trim() || undefined,
+          },
           {
             headers: { Authorization: `Bearer ${accessToken}` },
           },
         );
 
-        const payUrl = momoRes.data?.payUrl || momoRes.data?.deeplink;
+        const orderId: string | undefined = checkoutResponse.data?.orderId;
+        if (orderId) orderIds = [orderId];
+        // checkout-quote trả payUrl trực tiếp cho MoMo (không cần gọi /payments/momo/create).
+        payUrl = checkoutResponse.data?.payUrl || checkoutResponse.data?.deeplink;
+      } else {
+        // ── Đặt hàng từ giỏ hàng ─────────────────────────────────────────────
+        const sellerOrders = Object.entries(shopGroups).map(([shopId, items]) => ({
+          seller_id: shopId,
+          items: items.map((item) => ({
+            product_id: item.productId,
+            quantity: item.quantity,
+            price: item.price,
+          })),
+          voucher_code: voucherByShop[shopId]?.code || undefined,
+        }));
+
+        const checkoutResponse = await api.post(
+          '/orders/checkout',
+          {
+            shipping_address: composedAddress,
+            payment_method: paymentMethod,
+            note: note.trim() || undefined,
+            seller_orders: sellerOrders,
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          },
+        );
+
+        orderIds = checkoutResponse.data?.order_ids ?? [];
+
+        if (paymentMethod === 'MOMO' && orderIds.length > 0) {
+          const momoRes = await api.post(
+            '/payments/momo/create',
+            { order_id: orderIds[0] },
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            },
+          );
+          payUrl = momoRes.data?.payUrl || momoRes.data?.deeplink;
+        }
+      }
+
+      if (paymentMethod === 'MOMO') {
         if (payUrl) {
           await Linking.openURL(payUrl);
         } else {
@@ -322,16 +403,18 @@ export default function CheckoutScreen() {
         }
       }
 
-      removeItems(selectedItems.map((item) => item.product.id));
+      // Chỉ checkout giỏ hàng mới xoá sản phẩm khỏi giỏ.
+      if (!isQuoteMode) {
+        removeItems(lineItems.map((item) => item.productId));
+      }
       setShowPreview(false);
 
-      // Navigate to success screen
       router.replace({
         pathname: '/order-success',
         params: {
           orderIds: orderIds.join(','),
           totalAmount: finalTotal.toString(),
-          itemCount: selectedItems.length.toString(),
+          itemCount: lineItems.length.toString(),
         },
       });
     } catch (error: any) {
@@ -382,10 +465,21 @@ export default function CheckoutScreen() {
             <View className="flex-row items-center">
               <Text className="text-slate-500">Trang chu</Text>
               <Text className="mx-2 text-slate-400">›</Text>
-              <Text className="text-slate-500">Gio hang</Text>
+              <Text className="text-slate-500">{isQuoteMode ? 'Thuong luong' : 'Gio hang'}</Text>
               <Text className="mx-2 text-slate-400">›</Text>
               <Text className="text-slate-900 font-semibold">Thanh toan</Text>
             </View>
+
+            {isQuoteMode ? (
+              <View className="mt-4 bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex-row items-center">
+                <View className="w-8 h-8 rounded-lg bg-orange-500 items-center justify-center mr-3">
+                  <FontAwesome name="handshake-o" size={14} color="#fff" />
+                </View>
+                <Text className="flex-1 text-orange-700 text-sm font-semibold">
+                  Don hang tu bao gia da thuong luong — gia da duoc chot voi nguoi ban.
+                </Text>
+              </View>
+            ) : null}
 
             <View className="bg-white rounded-2xl border border-slate-100 mt-4 overflow-hidden">
               <View className="px-4 py-3 border-b border-slate-100 flex-row items-center">
@@ -458,7 +552,7 @@ export default function CheckoutScreen() {
             </View>
 
             {Object.entries(shopGroups).map(([shopId, items]) => {
-              const shopName = items[0]?.product.shop?.store_name ?? 'Shop';
+              const shopName = items[0]?.shopName ?? 'Shop';
               const shopSubtotal = subtotalByShop[shopId] ?? 0;
               const voucherState = voucherByShop[shopId] ?? getDefaultVoucherState();
               const availableShopVouchers = savedVouchers.filter(
@@ -474,85 +568,94 @@ export default function CheckoutScreen() {
 
                   <View className="p-4 gap-3">
                     {items.map((item) => (
-                      <View key={item.product.id} className="flex-row items-center">
+                      <View key={item.productId} className="flex-row items-center">
                         <Image
-                          source={{ uri: resolveImageUrl(item.product.images?.[0]) }}
+                          source={{ uri: resolveImageUrl(item.image) }}
                           className="w-12 h-12 rounded-lg"
                         />
                         <View className="flex-1 ml-3">
-                          <Text className="text-sm font-semibold text-slate-800" numberOfLines={1}>{item.product.name}</Text>
-                          <Text className="text-xs text-slate-400">{item.product.unit ?? 'kg'} x {item.quantity}</Text>
+                          <Text className="text-sm font-semibold text-slate-800" numberOfLines={1}>{item.name}</Text>
+                          <Text className="text-xs text-slate-400">{item.unit} x {item.quantity}</Text>
                         </View>
-                        <Text className="font-bold text-slate-900">{formatPrice((item.product.price ?? 0) * item.quantity)}</Text>
+                        <Text className="font-bold text-slate-900">{formatPrice(item.price * item.quantity)}</Text>
                       </View>
                     ))}
                   </View>
 
-                  <View className="px-4 pb-4">
-                    <View className="flex-row gap-2">
-                      <TextInput
-                        value={voucherState.inputCode}
-                        onChangeText={(text) =>
-                          updateVoucherState(shopId, (prev) => ({ ...prev, inputCode: text, error: '' }))
-                        }
-                        placeholder="Nhap ma giam gia"
-                        autoCapitalize="characters"
-                        className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 bg-slate-50"
-                      />
-                      <TouchableOpacity
-                        className="bg-orange-300 rounded-xl px-4 items-center justify-center"
-                        onPress={() => applyVoucher(shopId)}
-                        disabled={voucherState.loading}
-                      >
-                        <Text className="text-white font-bold">{voucherState.loading ? '...' : 'Ap dung'}</Text>
-                      </TouchableOpacity>
+                  {isQuoteMode ? (
+                    <View className="px-4 pb-4">
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-xs text-slate-400">Tong shop</Text>
+                        <Text className="font-black text-slate-900">{formatPrice(shopSubtotal)}</Text>
+                      </View>
                     </View>
-
-                    {availableShopVouchers.length > 0 ? (
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2">
-                        <View className="flex-row gap-2">
-                          {availableShopVouchers.map((sv) => {
-                            const code = sv.voucher?.code ?? '';
-                            const isApplied = voucherState.code === code;
-                            return (
-                              <TouchableOpacity
-                                key={`${shopId}-${code}`}
-                                className={`px-3 py-2 rounded-lg border ${
-                                  isApplied
-                                    ? 'border-green-400 bg-green-50'
-                                    : 'border-orange-200 bg-orange-50'
-                                }`}
-                                onPress={() => void applySavedVoucher(shopId, code)}
-                                disabled={voucherState.loading}
-                              >
-                                <Text className={`text-xs font-bold ${isApplied ? 'text-green-600' : 'text-orange-600'}`}>
-                                  {code}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      </ScrollView>
-                    ) : null}
-
-                    {voucherState.code ? (
-                      <View className="mt-2 flex-row items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                        <Text className="text-green-700 text-sm font-semibold">Da ap dung: {voucherState.code}</Text>
-                        <TouchableOpacity onPress={() => removeVoucher(shopId)}>
-                          <Text className="text-red-500 font-semibold">Xoa</Text>
+                  ) : (
+                    <View className="px-4 pb-4">
+                      <View className="flex-row gap-2">
+                        <TextInput
+                          value={voucherState.inputCode}
+                          onChangeText={(text) =>
+                            updateVoucherState(shopId, (prev) => ({ ...prev, inputCode: text, error: '' }))
+                          }
+                          placeholder="Nhap ma giam gia"
+                          autoCapitalize="characters"
+                          className="flex-1 rounded-xl border border-slate-300 px-3 py-2.5 bg-slate-50"
+                        />
+                        <TouchableOpacity
+                          className="bg-orange-300 rounded-xl px-4 items-center justify-center"
+                          onPress={() => applyVoucher(shopId)}
+                          disabled={voucherState.loading}
+                        >
+                          <Text className="text-white font-bold">{voucherState.loading ? '...' : 'Ap dung'}</Text>
                         </TouchableOpacity>
                       </View>
-                    ) : null}
 
-                    {voucherState.error ? <Text className="text-red-500 text-xs mt-2">{voucherState.error}</Text> : null}
+                      {availableShopVouchers.length > 0 ? (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2">
+                          <View className="flex-row gap-2">
+                            {availableShopVouchers.map((sv) => {
+                              const code = sv.voucher?.code ?? '';
+                              const isApplied = voucherState.code === code;
+                              return (
+                                <TouchableOpacity
+                                  key={`${shopId}-${code}`}
+                                  className={`px-3 py-2 rounded-lg border ${
+                                    isApplied
+                                      ? 'border-green-400 bg-green-50'
+                                      : 'border-orange-200 bg-orange-50'
+                                  }`}
+                                  onPress={() => void applySavedVoucher(shopId, code)}
+                                  disabled={voucherState.loading}
+                                >
+                                  <Text className={`text-xs font-bold ${isApplied ? 'text-green-600' : 'text-orange-600'}`}>
+                                    {code}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        </ScrollView>
+                      ) : null}
 
-                    <View className="mt-3 flex-row items-center justify-between">
-                      <Text className="text-xs text-slate-400">Tong shop</Text>
-                      <Text className="font-black text-slate-900">
-                        {formatPrice(Math.max(0, shopSubtotal - (voucherState.discountAmount ?? 0)))}
-                      </Text>
+                      {voucherState.code ? (
+                        <View className="mt-2 flex-row items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                          <Text className="text-green-700 text-sm font-semibold">Da ap dung: {voucherState.code}</Text>
+                          <TouchableOpacity onPress={() => removeVoucher(shopId)}>
+                            <Text className="text-red-500 font-semibold">Xoa</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+
+                      {voucherState.error ? <Text className="text-red-500 text-xs mt-2">{voucherState.error}</Text> : null}
+
+                      <View className="mt-3 flex-row items-center justify-between">
+                        <Text className="text-xs text-slate-400">Tong shop</Text>
+                        <Text className="font-black text-slate-900">
+                          {formatPrice(Math.max(0, shopSubtotal - (voucherState.discountAmount ?? 0)))}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
+                  )}
                 </View>
               );
             })}
@@ -565,10 +668,12 @@ export default function CheckoutScreen() {
                 <Text className="text-slate-800">{formatPrice(totalPrice)}</Text>
               </View>
 
-              <View className="flex-row justify-between mb-2">
-                <Text className="text-slate-500">Giam gia voucher</Text>
-                <Text className="text-orange-500">-{formatPrice(totalDiscount)}</Text>
-              </View>
+              {!isQuoteMode ? (
+                <View className="flex-row justify-between mb-2">
+                  <Text className="text-slate-500">Giam gia voucher</Text>
+                  <Text className="text-orange-500">-{formatPrice(totalDiscount)}</Text>
+                </View>
+              ) : null}
 
               <View className="flex-row justify-between mb-2">
                 <Text className="text-slate-500">Phi van chuyen</Text>
@@ -590,9 +695,9 @@ export default function CheckoutScreen() {
               />
 
               <TouchableOpacity
-                className={`py-3.5 rounded-xl items-center ${selectedItems.length > 0 && user.role === 'BUYER' ? 'bg-green-600' : 'bg-slate-300'}`}
+                className={`py-3.5 rounded-xl items-center ${lineItems.length > 0 && user.role === 'BUYER' ? 'bg-green-600' : 'bg-slate-300'}`}
                 onPress={showOrderPreview}
-                disabled={selectedItems.length === 0 || submitting || user.role !== 'BUYER'}
+                disabled={lineItems.length === 0 || submitting || user.role !== 'BUYER'}
               >
                 <Text className="text-white font-bold">{submitting ? 'Dang dat hang...' : 'TIEP TUC'}</Text>
               </TouchableOpacity>
