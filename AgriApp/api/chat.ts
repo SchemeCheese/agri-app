@@ -88,6 +88,9 @@ export const uploadChatImage = async (
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'multipart/form-data',
     },
+    // Uploads to the remote backend over a phone network need far more than the
+    // client's default 10s — a premature abort was the "operation has timed out".
+    timeout: 60000,
   });
   return data;
 };

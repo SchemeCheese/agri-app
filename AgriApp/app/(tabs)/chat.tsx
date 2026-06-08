@@ -17,7 +17,7 @@ import {
 import { ChatMessage, ConversationSummary, getConversationMessages, getConversations, uploadChatImage } from '@/api/chat';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
-import * as ImagePicker from 'expo-image-picker';
+import { ImagePickPermissionError, pickAndProcessImage } from '@/utils/pickImage';
 import {
   cancelNegotiation,
   joinChatRoom,
@@ -366,46 +366,39 @@ export default function ChatTabScreen() {
   const handlePickAndSendImage = async () => {
     if (!accessToken || !selectedConversationId || uploadingImage) return;
 
+    let image;
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Can quyen truy cap anh', 'Vui long cap quyen de gui anh trong chat.');
-        return;
+      // Helper downscales + converts to JPEG so the upload finishes well under
+      // the timeout (the old flow shipped raw multi-MB iPhone photos).
+      image = await pickAndProcessImage({ maxWidth: 1280, compress: 0.6 });
+    } catch (err: any) {
+      if (err instanceof ImagePickPermissionError) {
+        Alert.alert('Can quyen truy cap anh', 'Vui long cap quyen thu vien anh trong Cai dat de gui anh.');
+      } else {
+        Alert.alert('Khong chon duoc anh', err?.message ?? 'Vui long thu lai.');
       }
-    } catch {
-      // Trên Web Expo, permission API có thể không tồn tại.
-    }
-
-    const picker = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-      allowsEditing: false,
-      base64: false,
-    });
-
-    if (picker.canceled) return;
-    const asset = picker.assets?.[0];
-    if (!asset?.uri) return;
-
-    // Client-side size guard (asset.fileSize có thể null trên iOS)
-    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-      Alert.alert('Anh qua lon', 'Vui long chon anh duoi 5MB.');
       return;
     }
+    if (!image) return; // user canceled
 
     setUploadingImage(true);
     try {
       const { url } = await uploadChatImage(accessToken, {
-        uri: asset.uri,
-        mimeType: asset.mimeType ?? 'image/jpeg',
-        fileName: asset.fileName ?? null,
+        uri: image.uri,
+        mimeType: image.mimeType,
+        fileName: image.fileName,
       });
       await sendChatImage(accessToken, {
         conversationId: selectedConversationId,
         imageUrl: url,
       });
     } catch (err: any) {
-      Alert.alert('Khong gui duoc anh', err?.response?.data?.message ?? err?.message ?? 'Vui long thu lai.');
+      const isTimeout = err?.code === 'ECONNABORTED' || /timeout|timed out/i.test(err?.message ?? '');
+      Alert.alert(
+        'Khong gui duoc anh',
+        err?.response?.data?.message ??
+          (isTimeout ? 'Mang chap, vui long thu lai.' : err?.message ?? 'Vui long thu lai.'),
+      );
     } finally {
       setUploadingImage(false);
     }

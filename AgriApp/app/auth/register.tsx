@@ -1,11 +1,11 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import api from '@/api/client';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
-import { useGoogleAuth } from '@/services/googleAuth';
+import { ensureGoogleConfigured, useGoogleAuth } from '@/services/googleAuth';
 import { useAuthStore } from '@/store/authStore';
 
 type RegisterRole = 'BUYER' | 'SELLER';
@@ -62,13 +62,8 @@ export default function RegisterScreen() {
   }, [googleResponse]);
 
   const handleGoogleSignup = async () => {
-    if (!googleConfigured) {
-      Alert.alert(
-        'Chưa cấu hình Google',
-        'Hãy điền EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID vào APP/.env và reload Expo.',
-      );
-      return;
-    }
+    // Shared guard: friendly VN alert + dev warning when env is missing (no crash).
+    if (!ensureGoogleConfigured(googleConfigured)) return;
     setErrorText('');
     setGoogleLoading(true);
     try {
@@ -140,8 +135,13 @@ export default function RegisterScreen() {
 
   return (
     <ScreenContainer>
-      <View className="flex-1 justify-center px-6 bg-[#F8FAFC]">
-        <View className="bg-white rounded-[28px] border border-slate-200 p-5">
+      <ScrollView
+        className="flex-1 px-6"
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingVertical: 28 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View className="bg-white rounded-[28px] border border-slate-200 p-6">
           <Text className="text-4xl font-extrabold text-slate-900 text-center">
             {step === 1 ? 'Tạo tài khoản mới' : 'Xác thực OTP'}
           </Text>
@@ -215,7 +215,8 @@ export default function RegisterScreen() {
               </View>
 
               <TouchableOpacity
-                className="bg-white border border-slate-300 rounded-xl py-3.5 items-center flex-row justify-center"
+                className="bg-white border border-slate-300 rounded-xl py-4 items-center flex-row justify-center"
+                activeOpacity={0.85}
                 onPress={handleGoogleSignup}
                 disabled={loading || googleLoading}
               >
@@ -248,9 +249,11 @@ export default function RegisterScreen() {
             </>
           )}
 
-          <View className="mt-5 flex-row justify-center">
+          <View className="mt-6 flex-row justify-center items-center">
             <Text className="text-slate-600">Đã có tài khoản? </Text>
             <TouchableOpacity
+              className="py-2 px-1"
+              activeOpacity={0.7}
               onPress={() =>
                 router.replace({ pathname: '/auth/login', params: params.returnTo ? { returnTo: params.returnTo, ids: params.ids } : undefined })
               }
@@ -259,7 +262,7 @@ export default function RegisterScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </ScrollView>
     </ScreenContainer>
   );
 }

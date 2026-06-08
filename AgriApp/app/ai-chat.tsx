@@ -3,6 +3,8 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -22,11 +24,13 @@ import {
   type AISessionSummary,
 } from '@/services/aiSocket';
 import { useAuthStore } from '@/store/authStore';
+import { ImagePickPermissionError, pickAndProcessImage, type ProcessedImage } from '@/utils/pickImage';
 
 type Message = {
   id: string;
   role: 'USER' | 'ASSISTANT';
   content: string;
+  imageUri?: string;
   pending?: boolean;
   error?: boolean;
 };
@@ -46,6 +50,8 @@ export default function AIChatScreen() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<AISessionSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [pendingImage, setPendingImage] = useState<ProcessedImage | null>(null);
+  const [attaching, setAttaching] = useState(false);
 
   const streamingIdRef = useRef<string | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
@@ -118,13 +124,46 @@ export default function AIChatScreen() {
     };
   }, [accessToken]);
 
+  // ── Attach image ────────────────────────────────────────────────────────
+  const pickImage = useCallback(async () => {
+    if (thinking || attaching) return;
+    setAttaching(true);
+    try {
+      // Smaller ceiling than chat: the base64 travels over the socket, and
+      // Gemini vision does not need full resolution.
+      const image = await pickAndProcessImage({ maxWidth: 1024, compress: 0.6, includeBase64: true });
+      if (image) {
+        setPendingImage(image);
+        setError(null);
+      }
+    } catch (err: any) {
+      if (err instanceof ImagePickPermissionError) {
+        Alert.alert('Can quyen truy cap anh', 'Vui long cap quyen thu vien anh trong Cai dat de gui anh cho AI.');
+      } else {
+        Alert.alert('Khong chon duoc anh', err?.message ?? 'Vui long thu lai.');
+      }
+    } finally {
+      setAttaching(false);
+    }
+  }, [thinking, attaching]);
+
   // ── Send ──────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!accessToken) return;
     const content = draft.trim();
-    if (!content || thinking) return;
+    // Allow sending when there is text OR an attached image.
+    if ((!content && !pendingImage) || thinking) return;
 
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'USER', content };
+    const image = pendingImage;
+    // Give the model a prompt even when the user only sent an image.
+    const outgoingContent = content || (image ? 'Phan tich giup toi hinh anh nong san nay.' : '');
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: 'USER',
+      content,
+      imageUri: image?.uri,
+    };
     const placeholderId = `a-${Date.now()}`;
     streamingIdRef.current = placeholderId;
 
@@ -134,10 +173,18 @@ export default function AIChatScreen() {
       { id: placeholderId, role: 'ASSISTANT', content: '', pending: true },
     ]);
     setDraft('');
+    setPendingImage(null);
     setError(null);
 
     try {
-      await askAI(accessToken, { content, sessionId: sessionId ?? undefined, mode });
+      await askAI(accessToken, {
+        content: outgoingContent,
+        sessionId: sessionId ?? undefined,
+        mode,
+        ...(image?.base64
+          ? { imageBase64: image.base64, imageMimeType: 'image/jpeg' as const }
+          : {}),
+      });
     } catch (err: any) {
       setError(err?.message ?? 'Khong gui duoc.');
       setMessages((prev) =>
@@ -149,7 +196,7 @@ export default function AIChatScreen() {
       );
       streamingIdRef.current = null;
     }
-  }, [accessToken, draft, thinking, sessionId, mode]);
+  }, [accessToken, draft, thinking, sessionId, mode, pendingImage]);
 
   // ── History ───────────────────────────────────────────────────────────
   const toggleHistory = useCallback(async () => {
@@ -278,17 +325,28 @@ export default function AIChatScreen() {
                       <Text className="text-slate-500 text-xs">{thinkingLabel ?? 'dang soan...'}</Text>
                     </View>
                   ) : (
-                    <Text
-                      className={`text-sm ${
-                        m.role === 'USER'
-                          ? 'text-white'
-                          : m.error
-                          ? 'text-red-700'
-                          : 'text-slate-900'
-                      }`}
-                    >
-                      {m.content}
-                    </Text>
+                    <>
+                      {m.imageUri && (
+                        <Image
+                          source={{ uri: m.imageUri }}
+                          className={`w-44 h-44 rounded-xl ${m.content ? 'mb-1.5' : ''}`}
+                          resizeMode="cover"
+                        />
+                      )}
+                      {!!m.content && (
+                        <Text
+                          className={`text-sm ${
+                            m.role === 'USER'
+                              ? 'text-white'
+                              : m.error
+                              ? 'text-red-700'
+                              : 'text-slate-900'
+                          }`}
+                        >
+                          {m.content}
+                        </Text>
+                      )}
+                    </>
                   )}
                 </View>
               </View>
@@ -301,8 +359,41 @@ export default function AIChatScreen() {
             </View>
           )}
 
+          {/* Selected image preview */}
+          {pendingImage && (
+            <View className="px-4 pt-2 bg-white border-t border-slate-200 flex-row items-center">
+              <View className="relative">
+                <Image
+                  source={{ uri: pendingImage.uri }}
+                  className="w-16 h-16 rounded-lg"
+                  resizeMode="cover"
+                />
+                <TouchableOpacity
+                  onPress={() => setPendingImage(null)}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 items-center justify-center"
+                >
+                  <FontAwesome name="times" size={11} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+              <Text className="text-xs text-slate-500 ml-3">Anh dinh kem · AgriBot se phan tich</Text>
+            </View>
+          )}
+
           {/* Composer */}
           <View className="flex-row items-center px-4 py-3 bg-white border-t border-slate-200">
+            <TouchableOpacity
+              onPress={pickImage}
+              disabled={connecting || thinking || attaching}
+              className={`w-10 h-10 rounded-full items-center justify-center mr-2 ${
+                connecting || thinking || attaching ? 'bg-slate-200' : 'bg-slate-100'
+              }`}
+            >
+              {attaching ? (
+                <ActivityIndicator size="small" color="#16A34A" />
+              ) : (
+                <FontAwesome name="image" size={16} color="#16A34A" />
+              )}
+            </TouchableOpacity>
             <TextInput
               className="flex-1 border border-slate-200 rounded-full px-4 py-2.5 mr-2 bg-slate-50"
               placeholder={connecting ? 'Dang ket noi...' : thinking ? 'Dang cho...' : 'Nhap cau hoi...'}
@@ -316,9 +407,9 @@ export default function AIChatScreen() {
             />
             <TouchableOpacity
               onPress={handleSend}
-              disabled={!draft.trim() || connecting || thinking}
+              disabled={(!draft.trim() && !pendingImage) || connecting || thinking}
               className={`w-10 h-10 rounded-full items-center justify-center ${
-                !draft.trim() || connecting || thinking ? 'bg-slate-300' : 'bg-green-600'
+                (!draft.trim() && !pendingImage) || connecting || thinking ? 'bg-slate-300' : 'bg-green-600'
               }`}
             >
               <FontAwesome name="send" size={14} color="#FFFFFF" />

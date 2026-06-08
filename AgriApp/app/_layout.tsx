@@ -3,8 +3,10 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { TextInput } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import './globals.css';
@@ -67,18 +69,24 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="product/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="shop/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="checkout" options={{ headerShown: false }} />
-          <Stack.Screen name="auth/login" options={{ headerShown: false }} />
-          <Stack.Screen name="auth/register" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-        </Stack>
-      </ThemeProvider>
-    </QueryClientProvider>
+    // SafeAreaProvider exposes real device insets to useSafeAreaInsets()
+    // (used by ScreenContainer) so screens never render under the iOS status bar.
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          {/* Dark icons so the status bar stays readable over the app's light background. */}
+          <StatusBar style="dark" />
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="product/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="shop/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="checkout" options={{ headerShown: false }} />
+            <Stack.Screen name="auth/login" options={{ headerShown: false }} />
+            <Stack.Screen name="auth/register" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          </Stack>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </SafeAreaProvider>
   );
 }

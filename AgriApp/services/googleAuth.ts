@@ -16,6 +16,7 @@
 
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
+import { Alert } from 'react-native';
 
 import api from '@/api/client';
 
@@ -25,6 +26,33 @@ export type SyncedSession = {
   message?: string;
   access_token: string;
   user: any;
+};
+
+/** Friendly, user-facing message shown when Google sign-in isn't configured. */
+export const GOOGLE_NOT_CONFIGURED_TITLE = 'Chưa cấu hình đăng nhập Google';
+export const GOOGLE_NOT_CONFIGURED_MESSAGE =
+  'Chưa cấu hình đăng nhập Google. Vui lòng kiểm tra EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID trong file APP/.env rồi reload Expo.';
+
+/**
+ * Single source of truth for the "is Google ready?" guard, shared by both the
+ * login and register screens so they behave identically.
+ *
+ * - Returns true → caller may proceed to promptAsync().
+ * - Returns false → shows a friendly Vietnamese alert to the user AND logs a
+ *   developer-only console warning. Never throws, so the screen can't crash
+ *   just because the env var is missing.
+ */
+export const ensureGoogleConfigured = (isConfigured: boolean): boolean => {
+  if (isConfigured) return true;
+
+  // Developer-facing hint only — normal users never see this.
+  console.warn(
+    '[googleAuth] EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID is empty — Google sign-in is disabled. ' +
+      'Add it to APP/.env and reload Expo (env vars are baked at bundle time).',
+  );
+
+  Alert.alert(GOOGLE_NOT_CONFIGURED_TITLE, GOOGLE_NOT_CONFIGURED_MESSAGE);
+  return false;
 };
 
 export const useGoogleAuth = (role?: 'BUYER' | 'SELLER') => {

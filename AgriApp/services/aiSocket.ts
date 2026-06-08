@@ -102,11 +102,16 @@ export interface AskPayload {
   sessionId?: string;
   mode: AIMode;
   context?: { productId?: string; shopId?: string };
+  // Optional image for vision analysis. base64 WITHOUT the data-URI prefix;
+  // the backend (Gemini vision) strips any prefix anyway. The /ai-chat gateway
+  // is configured with a 16MB buffer, so a compressed JPEG is comfortably safe.
+  imageBase64?: string;
+  imageMimeType?: 'image/jpeg' | 'image/png' | 'image/webp';
 }
 
 export const askAI = async (accessToken: string, payload: AskPayload) => {
   const socket = await ensureAISocket(accessToken);
-  socket.emit('ai:ask', payload as Record<string, unknown>);
+  socket.emit('ai:ask', payload as unknown as Record<string, unknown>);
 };
 
 export const subscribeAIEvents = async (
