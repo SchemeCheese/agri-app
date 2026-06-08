@@ -86,7 +86,10 @@ export const uploadChatImage = async (
   const { data } = await api.post('/chat/upload-image', form, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'multipart/form-data',
+      // NB: do NOT set Content-Type here. React Native fills in
+      // `multipart/form-data; boundary=...` itself, and the client interceptor
+      // strips the default application/json for FormData. Pinning it manually
+      // omits the boundary and the backend can never parse the upload.
     },
     // Uploads to the remote backend over a phone network need far more than the
     // client's default 10s — a premature abort was the "operation has timed out".

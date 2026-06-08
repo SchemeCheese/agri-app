@@ -16,9 +16,11 @@
 
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
+import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { Alert } from 'react-native';
 
 import api from '@/api/client';
+import { getFirebaseAuth, isFirebaseConfigured } from '@/lib/firebase';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -31,7 +33,7 @@ export type SyncedSession = {
 /** Friendly, user-facing message shown when Google sign-in isn't configured. */
 export const GOOGLE_NOT_CONFIGURED_TITLE = 'Chưa cấu hình đăng nhập Google';
 export const GOOGLE_NOT_CONFIGURED_MESSAGE =
-  'Chưa cấu hình đăng nhập Google. Vui lòng kiểm tra EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID trong file APP/.env rồi reload Expo.';
+  'Chưa cấu hình đăng nhập Google. Vui lòng kiểm tra EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID và các biến EXPO_PUBLIC_FIREBASE_* trong file APP/.env rồi reload Expo.';
 
 /**
  * Single source of truth for the "is Google ready?" guard, shared by both the
@@ -74,10 +76,24 @@ export const useGoogleAuth = (role?: 'BUYER' | 'SELLER') => {
     request,
     response,
     promptAsync,
-    isConfigured: !!webClientId,
-    syncWithBackend: async (idToken: string): Promise<SyncedSession> => {
-      // Same endpoint web uses. /auth/sync upserts the User row keyed by firebase_uid.
-      const body: Record<string, unknown> = { idToken };
+    // Google sign-in needs BOTH the OAuth web client ID (for expo-auth-session)
+    // AND the Firebase web config (to exchange the Google token below).
+    isConfigured: !!webClientId && isFirebaseConfigured(),
+    // Takes the raw Google OAuth id_token from expo-auth-session and returns the
+    // backend session.
+    //
+    // The exchange step is mandatory: the BE verifies tokens with Firebase
+    // Admin's verifyIdToken(), which only accepts *Firebase* ID tokens. Sending
+    // the Google token straight to /auth/sync returns 401. So we mirror FE web —
+    // build a Google credential, sign in to Firebase, then forward the resulting
+    // *Firebase* ID token. /auth/sync upserts the User row keyed by firebase_uid.
+    syncWithBackend: async (googleIdToken: string): Promise<SyncedSession> => {
+      const auth = getFirebaseAuth();
+      const credential = GoogleAuthProvider.credential(googleIdToken);
+      const userCred = await signInWithCredential(auth, credential);
+      const firebaseIdToken = await userCred.user.getIdToken(true);
+
+      const body: Record<string, unknown> = { idToken: firebaseIdToken };
       if (role) body.role = role;
       try {
         const { data } = await api.post('/auth/sync', body);

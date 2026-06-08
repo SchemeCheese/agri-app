@@ -40,6 +40,17 @@ api.interceptors.request.use(
     } catch {
       /* store not initialized yet — fall through unauthenticated */
     }
+
+    // Multipart uploads: React Native's networking layer sets
+    // `multipart/form-data; boundary=...` automatically when sending FormData —
+    // but ONLY if we don't pin a Content-Type ourselves. This instance defaults
+    // to `application/json`, so for FormData we must clear it; otherwise the
+    // request goes out boundary-less and the backend (multer) waits forever for
+    // a body it can't parse → the upload "operation has timed out".
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+      delete config.headers['content-type'];
+    }
     return config;
   },
   (error) => Promise.reject(error),
