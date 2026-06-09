@@ -275,7 +275,27 @@ export default function ProfileScreen() {
   const user = useAuthStore((state) => state.user);
   const accessToken = useAuthStore((state) => state.accessToken);
   const logout = useAuthStore((state) => state.logout);
+  const setSession = useAuthStore((state) => state.setSession);
   const { totalItems } = useCartSummary();
+
+  // Đổi workspace: chỉ hiện khi tài khoản sở hữu cả BUYER + SELLER.
+  const canSwitchRole = !!user?.is_buyer && !!user?.is_seller;
+  const [switchingRole, setSwitchingRole] = useState(false);
+  const handleSwitchRole = async (to: 'BUYER' | 'SELLER') => {
+    if (switchingRole) return;
+    setSwitchingRole(true);
+    try {
+      const { data } = await api.post('/auth/switch-role', { role: to });
+      setSession({ user: data.user, accessToken: data.access_token });
+      // Đổi tab gốc theo workspace mới — quay về Trang chủ/Tổng quan.
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      const message = error?.response?.data?.message ?? 'Không thể đổi vai trò. Vui lòng thử lại.';
+      Alert.alert('Đổi vai trò thất bại', Array.isArray(message) ? message.join(', ') : String(message));
+    } finally {
+      setSwitchingRole(false);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<TabKey>('info');
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -1184,6 +1204,17 @@ export default function ProfileScreen() {
                 <Text className="text-white font-bold">{savingShopProfile ? 'Dang luu...' : 'Luu thay doi'}</Text>
               </TouchableOpacity>
 
+              {canSwitchRole && (
+                <TouchableOpacity
+                  className="mt-3 rounded-xl px-4 py-3 flex-row items-center justify-center border border-emerald-200 bg-emerald-50"
+                  onPress={() => handleSwitchRole('BUYER')}
+                  disabled={switchingRole}
+                >
+                  <FontAwesome name="exchange" size={16} color="#16A34A" />
+                  <Text className="ml-2 font-bold text-emerald-600">{switchingRole ? 'Dang chuyen...' : 'Chuyen sang Mua hang'}</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 className="mt-3 rounded-xl px-4 py-3 flex-row items-center justify-center border border-red-200 bg-red-50"
                 onPress={() => {
@@ -1272,7 +1303,16 @@ export default function ProfileScreen() {
 
             <View className="h-px bg-slate-100 my-2" />
 
-            {!isSeller ? (
+            {canSwitchRole ? (
+              <TouchableOpacity
+                className="rounded-xl px-4 py-3 flex-row items-center"
+                onPress={() => handleSwitchRole('SELLER')}
+                disabled={switchingRole}
+              >
+                <FontAwesome name="exchange" size={16} color="#16A34A" />
+                <Text className="ml-3 font-bold text-lg text-emerald-700">{switchingRole ? 'Dang chuyen...' : 'Chuyen sang Ban hang'}</Text>
+              </TouchableOpacity>
+            ) : !isSeller ? (
               <TouchableOpacity
                 className="rounded-xl px-4 py-3 flex-row items-center"
                 onPress={() => router.push('/become-seller')}

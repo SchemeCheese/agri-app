@@ -18,23 +18,28 @@ export type AuthUser = {
   is_buyer?: boolean;
   is_seller?: boolean;
   is_admin?: boolean;
+  // Workspace đang dùng (BE ký vào JWT). Quyết định UI tab buyer/seller.
+  activeRole?: UserRole;
+  // Các vai trò user sở hữu — dùng để hiện nút "Đổi vai trò".
+  allowedRoles?: UserRole[];
   avatar?: string;
 };
+
+const VALID_ROLES: UserRole[] = ['BUYER', 'SELLER', 'ADMIN'];
 
 export const normalizeAuthUser = (raw: any): AuthUser => {
   const is_buyer = !!raw?.is_buyer;
   const is_seller = !!raw?.is_seller;
   const is_admin = !!raw?.is_admin;
-  // Existing API responses already carried a `role` field in some shapes (e.g.
-  // a few cached payloads) — preserve it as a fallback for forward-compat.
-  const explicitRole = raw?.role as UserRole | undefined;
-  const role: UserRole = is_admin
-    ? 'ADMIN'
-    : is_seller
-      ? 'SELLER'
-      : explicitRole && ['BUYER', 'SELLER', 'ADMIN'].includes(explicitRole)
-        ? explicitRole
-        : 'BUYER';
+  const activeRole = VALID_ROLES.includes(raw?.activeRole) ? (raw.activeRole as UserRole) : undefined;
+  const allowedRoles: UserRole[] = Array.isArray(raw?.allowedRoles)
+    ? raw.allowedRoles.filter((r: any) => VALID_ROLES.includes(r))
+    : [is_buyer && 'BUYER', is_seller && 'SELLER', is_admin && 'ADMIN'].filter(Boolean) as UserRole[];
+  // `role` = workspace HIỆN TẠI. Ưu tiên activeRole (BE ký) để một seller đang ở
+  // workspace BUYER vẫn thấy UI mua hàng. Token cũ chưa có activeRole → suy từ flags.
+  const explicitRole = VALID_ROLES.includes(raw?.role) ? (raw.role as UserRole) : undefined;
+  const role: UserRole = activeRole
+    ?? (is_admin ? 'ADMIN' : is_seller ? 'SELLER' : explicitRole ?? 'BUYER');
   return {
     id: raw.id,
     email: raw.email,
@@ -43,6 +48,8 @@ export const normalizeAuthUser = (raw: any): AuthUser => {
     is_buyer,
     is_seller,
     is_admin,
+    activeRole,
+    allowedRoles,
     avatar: raw.avatar || undefined,
   };
 };

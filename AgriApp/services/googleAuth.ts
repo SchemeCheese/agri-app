@@ -28,8 +28,13 @@ WebBrowser.maybeCompleteAuthSession();
 
 export type SyncedSession = {
   message?: string;
-  access_token: string;
-  user: any;
+  // Phiên đầy đủ:
+  access_token?: string;
+  user?: any;
+  // Hoặc yêu cầu chọn workspace (tài khoản sở hữu cả BUYER + SELLER):
+  requiresRoleSelection?: boolean;
+  tempToken?: string;
+  allowedRoles?: ('BUYER' | 'SELLER' | 'ADMIN')[];
 };
 
 /** Friendly, user-facing message shown when Google sign-in isn't configured. */

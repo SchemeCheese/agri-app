@@ -9,14 +9,19 @@ import { ensureGoogleConfigured, useGoogleAuth } from '@/services/googleAuth';
 import { useAuthStore } from '@/store/authStore';
 
 type LoginResponse = {
-  access_token: string;
-  user: {
+  // Phiên đầy đủ:
+  access_token?: string;
+  user?: {
     id: string;
     email: string;
     full_name: string;
     role: 'BUYER' | 'SELLER' | 'ADMIN';
     avatar?: string;
   };
+  // Hoặc yêu cầu chọn workspace (sở hữu cả BUYER + SELLER):
+  requiresRoleSelection?: boolean;
+  tempToken?: string;
+  allowedRoles?: ('BUYER' | 'SELLER' | 'ADMIN')[];
 };
 
 export default function LoginScreen() {
@@ -31,6 +36,28 @@ export default function LoginScreen() {
   const [errorText, setErrorText] = useState('');
 
   const { response: googleResponse, promptAsync, isConfigured: googleConfigured, syncWithBackend } = useGoogleAuth();
+
+  // Điều hướng sau khi đã có phiên đầy đủ (giữ returnTo/ids cho luồng checkout).
+  const goAfterSession = () => {
+    if (params.returnTo === '/checkout') {
+      router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
+    } else {
+      router.replace('/profile');
+    }
+  };
+
+  // Tài khoản nhiều vai trò → chuyển sang màn chọn workspace, mang theo tempToken.
+  const goToRoleSelect = (tempToken: string, allowedRoles?: string[]) => {
+    router.replace({
+      pathname: '/auth/select-role',
+      params: {
+        tempToken,
+        allowedRoles: (allowedRoles ?? []).join(','),
+        ...(params.returnTo ? { returnTo: params.returnTo } : {}),
+        ...(params.ids ? { ids: params.ids } : {}),
+      },
+    });
+  };
 
   // expo-auth-session promptAsync resolves *before* the response state lands —
   // wait for the response effect to fire so we can read idToken safely.
@@ -52,12 +79,12 @@ export default function LoginScreen() {
       }
       try {
         const synced = await syncWithBackend(idToken);
-        setSession({ user: synced.user, accessToken: synced.access_token });
-        if (params.returnTo === '/checkout') {
-          router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
-        } else {
-          router.replace('/profile');
+        if (synced.requiresRoleSelection && synced.tempToken) {
+          goToRoleSelect(synced.tempToken, synced.allowedRoles);
+          return;
         }
+        setSession({ user: synced.user, accessToken: synced.access_token! });
+        goAfterSession();
       } catch (err: any) {
         const message = err?.response?.data?.message ?? 'Đồng bộ tài khoản Google thất bại.';
         setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
@@ -108,20 +135,23 @@ export default function LoginScreen() {
         password,
       });
 
-      setSession({
-        user: response.data.user,
-        accessToken: response.data.access_token,
-      });
-
-      if (params.returnTo === '/checkout') {
-        router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
+      const data = response.data;
+      // Sở hữu cả 2 vai trò → BE trả tempToken, chuyển sang màn chọn workspace.
+      if (data.requiresRoleSelection && data.tempToken) {
+        goToRoleSelect(data.tempToken, data.allowedRoles);
         return;
       }
 
-      router.replace('/profile');
+      setSession({ user: data.user, accessToken: data.access_token! });
+      goAfterSession();
     } catch (error: any) {
-      const message = error?.response?.data?.message ?? 'Đăng nhập thất bại. Vui lòng thử lại.';
-      setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
+      // 403 = email chưa xác thực OTP (OTP hard-gate ở BE).
+      if (error?.response?.status === 403) {
+        setErrorText('Tài khoản chưa xác thực OTP. Vui lòng kiểm tra email để kích hoạt.');
+      } else {
+        const message = error?.response?.data?.message ?? 'Đăng nhập thất bại. Vui lòng thử lại.';
+        setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
+      }
     } finally {
       setLoading(false);
     }
