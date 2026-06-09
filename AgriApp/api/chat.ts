@@ -1,3 +1,6 @@
+import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
+
 import api from './client';
 
 export type InitiateChatPayload = {
@@ -72,30 +75,53 @@ export type InitiateChatResponse = {
 // ─── Upload ảnh chat ─────────────────────────────────────────────────────
 // uri: file:// hoặc content:// từ expo-image-picker.
 // Trả về { url } để FE dùng cho event WS sendImageMessage.
+//
+// On native (iOS/Android, incl. Expo Go) we upload via expo-file-system's
+// FileSystem.uploadAsync instead of an axios FormData POST. uploadAsync streams
+// the file through the platform's NATIVE networking stack, which:
+//   • reads the iOS `file:///` (and Android `content://`) URI directly — no
+//     JS-side blob marshalling that physical iPhones choke on;
+//   • builds the `multipart/form-data; boundary=...` itself, so there's no risk
+//     of axios/RN stripping the boundary (the old "operation has timed out").
+// Web keeps the axios path because uploadAsync is native-only.
 export const uploadChatImage = async (
   accessToken: string,
   asset: { uri: string; mimeType?: string | null; fileName?: string | null },
 ): Promise<{ url: string; size: number; mime: string }> => {
-  const form = new FormData();
   const mime = asset.mimeType || 'image/jpeg';
   const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : 'jpg';
   const name = asset.fileName || `chat-${Date.now()}.${ext}`;
-  // React Native FormData yêu cầu shape { uri, name, type }
-  form.append('image', { uri: asset.uri, name, type: mime } as any);
 
-  const { data } = await api.post('/chat/upload-image', form, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      // NB: do NOT set Content-Type here. React Native fills in
-      // `multipart/form-data; boundary=...` itself, and the client interceptor
-      // strips the default application/json for FormData. Pinning it manually
-      // omits the boundary and the backend can never parse the upload.
-    },
-    // Uploads to the remote backend over a phone network need far more than the
-    // client's default 10s — a premature abort was the "operation has timed out".
-    timeout: 60000,
+  // Web has no native FileSystem.uploadAsync → keep the axios FormData path.
+  if (Platform.OS === 'web') {
+    const form = new FormData();
+    // React Native FormData yêu cầu shape { uri, name, type }
+    form.append('image', { uri: asset.uri, name, type: mime } as any);
+    // Do NOT set Content-Type — the client interceptor clears it for FormData so
+    // RN can fill in the boundary itself.
+    const { data } = await api.post('/chat/upload-image', form, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 60000,
+    });
+    return data as { url: string; size: number; mime: string };
+  }
+
+  // Native: uploadAsync needs an ABSOLUTE url (no axios baseURL merging).
+  const base = (api.defaults.baseURL ?? '').replace(/\/$/, '');
+  const endpoint = `${base}/chat/upload-image`;
+
+  const result = await FileSystem.uploadAsync(endpoint, asset.uri, {
+    httpMethod: 'POST',
+    uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+    fieldName: 'image', // must match the multer field on /chat/upload-image
+    mimeType: mime,
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-  return data;
+
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`Upload ảnh thất bại (HTTP ${result.status}): ${result.body?.slice(0, 200)}`);
+  }
+  return JSON.parse(result.body) as { url: string; size: number; mime: string };
 };
 
 export const initiateChat = async (accessToken: string, payload: InitiateChatPayload) => {

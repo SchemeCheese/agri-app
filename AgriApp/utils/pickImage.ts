@@ -28,9 +28,9 @@ export type ProcessedImage = {
 };
 
 type PickOptions = {
-  /** Downscale ceiling in px (only shrinks, never upscales). Default 1280. */
+  /** Downscale ceiling in px (only shrinks, never upscales). Default 1024. */
   maxWidth?: number;
-  /** JPEG quality 0..1. Default 0.6. */
+  /** JPEG quality 0..1. Default 0.5. */
   compress?: number;
   /** Return base64 too (for the AI socket payload). Default false. */
   includeBase64?: boolean;
@@ -39,7 +39,10 @@ type PickOptions = {
 export const pickAndProcessImage = async (
   opts: PickOptions = {},
 ): Promise<ProcessedImage | null> => {
-  const { maxWidth = 1280, compress = 0.6, includeBase64 = false } = opts;
+  // Aggressive defaults: 1024px ceiling + 0.5 JPEG quality keeps uploads small
+  // enough to clear phone-network timeouts and stay well under the AI socket's
+  // base64 buffer ceiling.
+  const { maxWidth = 1024, compress = 0.5, includeBase64 = false } = opts;
 
   // Permission. On iOS this triggers the system prompt the first time; if the
   // user has previously denied, `granted` is false and we surface a friendly

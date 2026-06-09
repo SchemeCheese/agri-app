@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "agriapp",
+    "scheme": [
+      "agriapp",
+      "com.agriconnect.app"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -15,18 +18,24 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.agriconnect.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Ứng dụng cần truy cập thư viện ảnh để bạn gửi ảnh trong trò chuyện và hỏi trợ lý AI.",
-        "NSCameraUsageDescription": "Ứng dụng cần truy cập camera để bạn chụp ảnh gửi trong trò chuyện."
+        "NSCameraUsageDescription": "Ứng dụng cần truy cập camera để bạn chụp ảnh gửi trong trò chuyện.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "package": "com.agriconnect.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -45,6 +54,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "079ed152-cd4d-43db-8254-5eb1390e072a"
+      }
     }
   }
 }

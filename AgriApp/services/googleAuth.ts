@@ -14,10 +14,12 @@
 //      the web client ID alone is enough for the auth proxy redirect.
 //   5. Reload Expo so the env var is picked up.
 
+import { ResponseType } from 'expo-auth-session';
 import * as Google from 'expo-auth-session/providers/google';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import api from '@/api/client';
 import { getFirebaseAuth, isFirebaseConfigured } from '@/lib/firebase';
@@ -62,23 +64,70 @@ export const useGoogleAuth = (role?: 'BUYER' | 'SELLER') => {
   const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
   const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
 
-  // expo-auth-session validates the clientId synchronously at hook init; passing
-  // a bogus-but-shaped placeholder when the env var isn't filled keeps the screen
-  // from crashing on render. We block actual sign-in via `isConfigured` below.
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    clientId: webClientId || 'unconfigured.apps.googleusercontent.com',
-    androidClientId,
-    iosClientId,
-    scopes: ['profile', 'email'],
-  });
+  // --- Two runtimes, two redirect strategies -------------------------------------
+  // Expo Go CANNOT register a custom URL scheme: makeRedirectUri() there always
+  // returns exp://<LAN-IP>:8081. Google rejects that for BOTH client types
+  // (native clients want the reversed-client-id scheme; Web clients want
+  // http/https), so a bare exp:// redirect = "400: invalid_request" and is
+  // un-whitelistable. The ONLY Google-acceptable redirect that can route back
+  // into Expo Go is the (deprecated, fragile) Expo auth proxy
+  // https://auth.expo.io/@owner/slug, paired with the WEB client.
+  //
+  // A dev/standalone build DOES own a custom scheme, so there the native
+  // iOS/Android OAuth clients work normally and the provider builds
+  // `${applicationId}:/oauthredirect` itself.
+  const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+  const owner = (Constants.expoConfig as { owner?: string } | null)?.owner ?? 'schemecheese';
+  const slug = Constants.expoConfig?.slug ?? 'AgriApp';
+  const proxyRedirectUri = `https://auth.expo.io/@${owner}/${slug}`;
+
+  // Build the request config per-runtime. Hooks can't be conditional, so we
+  // compute one config object and call useAuthRequest exactly once.
+  const requestConfig: Parameters<typeof Google.useAuthRequest>[0] = isExpoGo
+    ? {
+        // FORCE the Web client — passing iosClientId here makes the provider
+        // pick the native iOS client, which is what throws the 400 in Expo Go.
+        clientId: webClientId ?? 'unconfigured.apps.googleusercontent.com',
+        // Implicit flow → id_token comes back directly (no client secret needed).
+        responseType: ResponseType.IdToken,
+        scopes: ['profile', 'email'],
+        redirectUri: proxyRedirectUri,
+      }
+    : {
+        // Dev/standalone build: native per-platform clients, provider-built
+        // `${applicationId}:/oauthredirect`. Code flow auto-exchanges to an
+        // id_token (surfaced on response.params.id_token).
+        webClientId,
+        iosClientId,
+        androidClientId,
+        scopes: ['profile', 'email'],
+      };
+  // Crash-guard: the hook validates a clientId synchronously at init.
+  if (!isExpoGo && !webClientId && !iosClientId && !androidClientId) {
+    (requestConfig as { clientId?: string }).clientId = 'unconfigured.apps.googleusercontent.com';
+  }
+
+  // In Expo Go, copy THIS exact string into Google Cloud Console → Web client →
+  // Authorized redirect URIs. Logged so the value is never a guess.
+  if (isExpoGo) {
+    console.log('[googleAuth] Expo Go redirectUri (add to Google Web client) =', proxyRedirectUri);
+  }
+
+  const [request, response, promptAsync] = Google.useAuthRequest(requestConfig);
+
+  // The client ID that actually gates sign-in on THIS runtime/platform.
+  const effectiveClientId = isExpoGo
+    ? webClientId
+    : Platform.select({ ios: iosClientId, android: androidClientId, default: webClientId });
 
   return {
     request,
     response,
     promptAsync,
-    // Google sign-in needs BOTH the OAuth web client ID (for expo-auth-session)
-    // AND the Firebase web config (to exchange the Google token below).
-    isConfigured: !!webClientId && isFirebaseConfigured(),
+    // Google sign-in needs the relevant OAuth client ID (for expo-auth-session)
+    // AND the Firebase web config (to exchange the token below).
+    isConfigured: !!effectiveClientId && isFirebaseConfigured(),
     // Takes the raw Google OAuth id_token from expo-auth-session and returns the
     // backend session.
     //

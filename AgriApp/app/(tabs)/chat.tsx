@@ -370,7 +370,7 @@ export default function ChatTabScreen() {
     try {
       // Helper downscales + converts to JPEG so the upload finishes well under
       // the timeout (the old flow shipped raw multi-MB iPhone photos).
-      image = await pickAndProcessImage({ maxWidth: 1280, compress: 0.6 });
+      image = await pickAndProcessImage({ maxWidth: 1024, compress: 0.5 });
     } catch (err: any) {
       if (err instanceof ImagePickPermissionError) {
         Alert.alert('Can quyen truy cap anh', 'Vui long cap quyen thu vien anh trong Cai dat de gui anh.');

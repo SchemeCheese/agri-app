@@ -90,19 +90,45 @@ export default function RegisterScreen() {
     setSuccessText('');
 
     try {
-      const response = await api.post<{ userId: string; message: string }>('/auth/register', {
+      const response = await api.post<{
+        userId: string;
+        message: string;
+        emailSent?: boolean;
+        autoVerified?: boolean;
+      }>('/auth/register', {
         email: email.trim(),
         password,
         full_name: fullName.trim(),
         role,
       });
 
+      // BE trả về 3 luồng (giống FE web) — PHẢI tôn trọng cờ, đừng mặc định nhảy
+      // sang bước OTP:
+      //   1. autoVerified=true → OTP tắt / đã bỏ qua → KHÔNG có email OTP → sang
+      //      thẳng đăng nhập (nếu vẫn hiện màn OTP thì user chờ mã không bao giờ tới).
+      //   2. emailSent=true → đã gửi OTP thật → sang bước nhập mã.
+      if (response.data.autoVerified) {
+        setSuccessText(response.data.message || 'Tài khoản đã sẵn sàng. Mời bạn đăng nhập.');
+        setTimeout(() => {
+          router.replace({
+            pathname: '/auth/login',
+            params: params.returnTo ? { returnTo: params.returnTo, ids: params.ids } : undefined,
+          });
+        }, 1200);
+        return;
+      }
+
       setUserId(response.data.userId);
-      setSuccessText('Mã OTP đã được gửi tới email của bạn.');
+      setSuccessText('Mã OTP đã được gửi đến email của bạn.');
       setStep(2);
     } catch (error: any) {
-      const message = error?.response?.data?.message ?? 'Đăng ký thất bại.';
-      setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
+      // 503 = email không gửi được (SMTP lỗi / chưa cấu hình). Hiện thông báo rõ ràng.
+      if (error?.response?.status === 503) {
+        setErrorText('Không gửi được mã OTP. Vui lòng kiểm tra email hoặc thử lại sau.');
+      } else {
+        const message = error?.response?.data?.message ?? 'Đăng ký thất bại.';
+        setErrorText(Array.isArray(message) ? message.join(', ') : String(message));
+      }
     } finally {
       setLoading(false);
     }
