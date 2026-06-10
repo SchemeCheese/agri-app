@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity
 
 import api from '@/api/client';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
-import { ensureGoogleConfigured, useGoogleAuth } from '@/services/googleAuth';
+import { ensureGoogleConfigured, GOOGLE_EXPO_GO_IOS_MESSAGE, useGoogleAuth } from '@/services/googleAuth';
 import { useAuthStore } from '@/store/authStore';
 
 type LoginResponse = {
@@ -35,7 +35,7 @@ export default function LoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [errorText, setErrorText] = useState('');
 
-  const { response: googleResponse, promptAsync, isConfigured: googleConfigured, syncWithBackend } = useGoogleAuth();
+  const { response: googleResponse, promptAsync, isConfigured: googleConfigured, isUnsupportedEnv: googleUnsupported, syncWithBackend } = useGoogleAuth();
 
   // Điều hướng sau khi đã có phiên đầy đủ (giữ returnTo/ids cho luồng checkout).
   const goAfterSession = () => {
@@ -97,8 +97,9 @@ export default function LoginScreen() {
   }, [googleResponse]);
 
   const handleGoogleLogin = async () => {
-    // Shared guard: friendly VN alert + dev warning when env is missing (no crash).
-    if (!ensureGoogleConfigured(googleConfigured)) return;
+    // Shared guard: chặn iOS Expo Go (hiện thông báo Email/OTP) + cảnh báo khi
+    // chưa cấu hình env. Không bao giờ crash.
+    if (!ensureGoogleConfigured(googleConfigured, googleUnsupported)) return;
     setErrorText('');
     setGoogleLoading(true);
     try {
@@ -248,6 +249,10 @@ export default function LoginScreen() {
               </>
             )}
           </TouchableOpacity>
+
+          {googleUnsupported ? (
+            <Text className="text-xs text-amber-600 text-center mt-2">{GOOGLE_EXPO_GO_IOS_MESSAGE}</Text>
+          ) : null}
 
           <View className="mt-6 flex-row justify-center items-center">
             <Text className="text-slate-600">Chưa có tài khoản? </Text>

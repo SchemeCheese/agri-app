@@ -43,6 +43,17 @@ export const GOOGLE_NOT_CONFIGURED_MESSAGE =
   'Chưa cấu hình đăng nhập Google. Vui lòng kiểm tra EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID và các biến EXPO_PUBLIC_FIREBASE_* trong file APP/.env rồi reload Expo.';
 
 /**
+ * Message shown when Google sign-in is blocked because the app runs inside
+ * Expo Go on iOS. Expo removed the auth proxy (auth.expo.io) in SDK 48+, and
+ * Expo Go cannot register the custom/reversed-client-id URL scheme an iOS OAuth
+ * client needs — so Google always rejects the redirect with "400 invalid_request".
+ * We surface this instead of opening a flow that is guaranteed to fail.
+ */
+export const GOOGLE_NOT_AVAILABLE_TITLE = 'Google Sign-In không khả dụng';
+export const GOOGLE_EXPO_GO_IOS_MESSAGE =
+  'Đăng nhập Google trên iPhone Expo Go bị giới hạn bởi OAuth. Vui lòng dùng Email/OTP để đăng nhập demo.';
+
+/**
  * Single source of truth for the "is Google ready?" guard, shared by both the
  * login and register screens so they behave identically.
  *
@@ -51,7 +62,14 @@ export const GOOGLE_NOT_CONFIGURED_MESSAGE =
  *   developer-only console warning. Never throws, so the screen can't crash
  *   just because the env var is missing.
  */
-export const ensureGoogleConfigured = (isConfigured: boolean): boolean => {
+export const ensureGoogleConfigured = (isConfigured: boolean, isUnsupportedEnv = false): boolean => {
+  // iOS Expo Go: opening Google OAuth here always 400s — show the friendly
+  // Email/OTP nudge instead of launching a doomed flow.
+  if (isUnsupportedEnv) {
+    Alert.alert(GOOGLE_NOT_AVAILABLE_TITLE, GOOGLE_EXPO_GO_IOS_MESSAGE);
+    return false;
+  }
+
   if (isConfigured) return true;
 
   // Developer-facing hint only — normal users never see this.
@@ -82,6 +100,13 @@ export const useGoogleAuth = (role?: 'BUYER' | 'SELLER') => {
   // iOS/Android OAuth clients work normally and the provider builds
   // `${applicationId}:/oauthredirect` itself.
   const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+  // ── Môi trường KHÔNG hỗ trợ Google OAuth ───────────────────────────────────
+  // iOS + Expo Go: proxy auth.expo.io đã bị gỡ (SDK 48+) và Expo Go không đăng ký
+  // được custom scheme cho iOS OAuth client ⇒ Google luôn trả 400 invalid_request.
+  // Chặn ở đây để không mở flow chắc chắn fail; người dùng demo dùng Email/OTP.
+  // (Web / Android / dev build KHÔNG bị chặn — Google vẫn chạy như cũ.)
+  const isUnsupportedEnv = isExpoGo && Platform.OS === 'ios';
 
   const owner = (Constants.expoConfig as { owner?: string } | null)?.owner ?? 'schemecheese';
   const slug = Constants.expoConfig?.slug ?? 'AgriApp';
@@ -130,6 +155,9 @@ export const useGoogleAuth = (role?: 'BUYER' | 'SELLER') => {
     request,
     response,
     promptAsync,
+    // true khi đang chạy iOS Expo Go — caller nên hiện thông báo Email/OTP thay vì
+    // mở Google OAuth (sẽ 400). Xem GOOGLE_EXPO_GO_IOS_MESSAGE.
+    isUnsupportedEnv,
     // Google sign-in needs the relevant OAuth client ID (for expo-auth-session)
     // AND the Firebase web config (to exchange the token below).
     isConfigured: !!effectiveClientId && isFirebaseConfigured(),
