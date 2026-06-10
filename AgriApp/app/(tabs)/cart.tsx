@@ -540,7 +540,12 @@ export default function CartScreen() {
                           <FontAwesome name="minus" size={12} color="#374151" />
                         </TouchableOpacity>
                         <Text className="px-3 font-semibold text-slate-800">{item.quantity}</Text>
-                        <TouchableOpacity className="px-3 py-1.5 bg-slate-50" onPress={() => increaseItem(item.product.id)}>
+                        <TouchableOpacity
+                          className="px-3 py-1.5 bg-slate-50"
+                          disabled={Number(item.product.stock) > 0 && item.quantity >= Number(item.product.stock)}
+                          style={{ opacity: Number(item.product.stock) > 0 && item.quantity >= Number(item.product.stock) ? 0.4 : 1 }}
+                          onPress={() => increaseItem(item.product.id)}
+                        >
                           <FontAwesome name="plus" size={12} color="#374151" />
                         </TouchableOpacity>
                       </View>

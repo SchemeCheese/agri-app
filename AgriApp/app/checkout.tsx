@@ -84,6 +84,7 @@ export default function CheckoutScreen() {
   const removeItems = useCartStore((state) => state.removeItems);
   const user = useAuthStore((state) => state.user);
   const accessToken = useAuthStore((state) => state.accessToken);
+  const setSession = useAuthStore((state) => state.setSession);
 
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -298,16 +299,33 @@ export default function CheckoutScreen() {
     }));
   };
 
-  const showOrderPreview = () => {
+  // Checkout YÊU CẦU activeRole = BUYER. Nếu đang ở workspace SELLER nhưng tài khoản
+  // SỞ HỮU vai trò BUYER → tự gọi /auth/switch-role để BE phát token BUYER mới (cập
+  // nhật store). Không sở hữu BUYER → báo lỗi thân thiện. KHÔNG chỉ đổi route.
+  const ensureBuyerRole = async (): Promise<boolean> => {
+    if (!user) return false;
+    if (user.role === 'BUYER') return true;
+    if (!user.is_buyer) {
+      Alert.alert('Thong bao', 'Tài khoản người bán không thể đặt hàng. Vui lòng dùng tài khoản người mua.');
+      return false;
+    }
+    try {
+      const { data } = await api.post('/auth/switch-role', { role: 'BUYER' });
+      setSession({ user: data.user, accessToken: data.access_token });
+      return true;
+    } catch {
+      Alert.alert('Thong bao', 'Không thể chuyển sang chế độ Mua hàng. Vui lòng thử lại.');
+      return false;
+    }
+  };
+
+  const showOrderPreview = async () => {
     if (!user || !accessToken) {
       router.replace({ pathname: '/auth/login', params: { returnTo: '/checkout', ids: ids.join(',') } });
       return;
     }
 
-    if (user.role !== 'BUYER') {
-      Alert.alert('Thong bao', 'Chi tai khoan Nguoi mua moi co the dat hang.');
-      return;
-    }
+    if (!(await ensureBuyerRole())) return;
 
     if (lineItems.length === 0) {
       Alert.alert('Thong bao', 'Khong co san pham duoc chon de thanh toan.');
@@ -338,6 +356,8 @@ export default function CheckoutScreen() {
       if (isQuoteMode) {
         // ── Đặt hàng từ báo giá đã thương lượng ──────────────────────────────
         // BE tự chốt báo giá (PENDING → ACCEPTED) và tạo đơn trong 1 lần gọi.
+        // Không gắn Authorization thủ công — interceptor lấy token MỚI NHẤT từ store
+        // (sau khi có thể đã switch-role sang BUYER), tránh dùng token cũ activeRole SELLER.
         const checkoutResponse = await api.post(
           '/orders/checkout-quote',
           {
@@ -346,9 +366,6 @@ export default function CheckoutScreen() {
             shippingAddress: composedAddress,
             phoneNumber: phone.trim(),
             note: note.trim() || undefined,
-          },
-          {
-            headers: { Authorization: `Bearer ${accessToken}` },
           },
         );
 
@@ -376,9 +393,6 @@ export default function CheckoutScreen() {
             note: note.trim() || undefined,
             seller_orders: sellerOrders,
           },
-          {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          },
         );
 
         orderIds = checkoutResponse.data?.order_ids ?? [];
@@ -387,9 +401,6 @@ export default function CheckoutScreen() {
           const momoRes = await api.post(
             '/payments/momo/create',
             { order_id: orderIds[0] },
-            {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            },
           );
           payUrl = momoRes.data?.payUrl || momoRes.data?.deeplink;
         }
@@ -694,10 +705,12 @@ export default function CheckoutScreen() {
                 className="rounded-xl border border-slate-300 px-3 py-2.5 bg-slate-50 mb-3"
               />
 
+              {/* KHÔNG khoá nút theo role ở đây — showOrderPreview/ensureBuyerRole sẽ tự
+                  switch sang BUYER (nếu sở hữu) hoặc báo lỗi thân thiện cho seller-only. */}
               <TouchableOpacity
-                className={`py-3.5 rounded-xl items-center ${lineItems.length > 0 && user.role === 'BUYER' ? 'bg-green-600' : 'bg-slate-300'}`}
+                className={`py-3.5 rounded-xl items-center ${lineItems.length > 0 && !submitting ? 'bg-green-600' : 'bg-slate-300'}`}
                 onPress={showOrderPreview}
-                disabled={lineItems.length === 0 || submitting || user.role !== 'BUYER'}
+                disabled={lineItems.length === 0 || submitting}
               >
                 <Text className="text-white font-bold">{submitting ? 'Dang dat hang...' : 'TIEP TUC'}</Text>
               </TouchableOpacity>

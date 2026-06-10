@@ -351,12 +351,18 @@ export default function ProductDetailScreen() {
 
                     <TouchableOpacity
                       className="px-3 py-2"
+                      disabled={(product.stock ?? 0) > 0 && quantity >= (product.stock ?? 0)}
+                      style={{ opacity: (product.stock ?? 0) > 0 && quantity >= (product.stock ?? 0) ? 0.4 : 1 }}
                       onPress={() => setQuantity((q) => Math.min(Math.max(1, product.stock ?? 1), q + 1))}
                     >
                       <FontAwesome name="plus" size={14} color="#374151" />
                     </TouchableOpacity>
                   </View>
                 </View>
+
+                {(product.stock ?? 0) > 0 && quantity >= (product.stock ?? 0) && (
+                  <Text className="mt-2 text-xs text-orange-600">Số lượng vượt quá tồn kho</Text>
+                )}
 
                 <View className="mt-4 flex-row gap-2">
                   <TouchableOpacity

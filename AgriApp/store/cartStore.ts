@@ -26,16 +26,21 @@ export const useCartStore = create<CartState>()(
       items: {},
       addItem: (product, quantity = 1, options) => {
         const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
+        // Cap theo ton kho — stock<=0/khong ro coi nhu khong gioi han (BE la chot chan cuoi).
+        const stock = Number((product as any).stock);
+        const capToStock = (qty: number) =>
+          Number.isFinite(stock) && stock > 0 ? Math.min(qty, stock) : qty;
         const message = `Da them ${product.name} (${safeQuantity} ${product.unit ?? 'sp'}) vao gio hang`;
 
         set((state) => {
           const current = state.items[product.id];
+          const nextQty = capToStock(current ? current.quantity + safeQuantity : safeQuantity);
           return {
             items: {
               ...state.items,
               [product.id]: {
                 product,
-                quantity: current ? current.quantity + safeQuantity : safeQuantity,
+                quantity: nextQty,
               },
             },
           };
@@ -54,6 +59,11 @@ export const useCartStore = create<CartState>()(
         set((state) => {
           const item = state.items[productId];
           if (!item) return state;
+          // Khong cho tang vuot ton kho.
+          const stock = Number((item.product as any).stock);
+          if (Number.isFinite(stock) && stock > 0 && item.quantity >= stock) {
+            return state;
+          }
           return {
             items: {
               ...state.items,

@@ -48,12 +48,19 @@ export default function LoginScreen() {
     }
   };
 
-  // Tài khoản sở hữu cả BUYER + SELLER: KHÔNG hỏi chọn vai trò nữa — tự vào
-  // workspace MUA HÀNG. Muốn sang bán hàng: dùng nút "Đổi vai trò" ở tab Tài khoản.
-  const autoSelectBuyer = async (tempToken: string) => {
-    const { data } = await api.post('/auth/select-role', { tempToken, role: 'BUYER' });
-    setSession({ user: data.user, accessToken: data.access_token });
-    goAfterSession();
+  // Tài khoản sở hữu cả BUYER + SELLER → KHÔNG tự chọn. Điều hướng sang màn chọn
+  // workspace (select-role) kèm tempToken; màn đó gọi /auth/select-role để BE phát
+  // token với đúng activeRole. Giữ returnTo/ids để hoàn tất checkout nếu đang dở.
+  const goSelectRole = (tempToken: string, allowedRoles?: string[]) => {
+    router.replace({
+      pathname: '/auth/select-role',
+      params: {
+        tempToken,
+        allowedRoles: (allowedRoles ?? ['BUYER', 'SELLER']).join(','),
+        ...(params.returnTo ? { returnTo: params.returnTo } : {}),
+        ...(params.ids ? { ids: params.ids } : {}),
+      },
+    });
   };
 
   // expo-auth-session promptAsync resolves *before* the response state lands —
@@ -77,7 +84,7 @@ export default function LoginScreen() {
       try {
         const synced = await syncWithBackend(idToken);
         if (synced.requiresRoleSelection && synced.tempToken) {
-          await autoSelectBuyer(synced.tempToken);
+          goSelectRole(synced.tempToken, synced.allowedRoles);
           return;
         }
         setSession({ user: synced.user, accessToken: synced.access_token! });
@@ -123,9 +130,9 @@ export default function LoginScreen() {
       });
 
       const data = response.data;
-      // Sở hữu cả 2 vai trò → tự vào workspace MUA HÀNG (không hỏi chọn vai trò).
+      // Sở hữu cả 2 vai trò → hiện màn chọn workspace (không tự chọn BUYER).
       if (data.requiresRoleSelection && data.tempToken) {
-        await autoSelectBuyer(data.tempToken);
+        goSelectRole(data.tempToken, data.allowedRoles);
         return;
       }
 

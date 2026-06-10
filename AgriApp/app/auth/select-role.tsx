@@ -32,7 +32,8 @@ export default function SelectRoleScreen() {
       if (params.returnTo === '/checkout') {
         router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
       } else {
-        router.replace('/profile');
+        // Về tab gốc — tab layout tự đổi theo activeRole (BUYER→Trang chủ, SELLER→Tổng quan).
+        router.replace('/');
       }
     } catch (error: any) {
       const message = error?.response?.data?.message ?? 'Không thể chọn vai trò. Vui lòng thử lại.';
