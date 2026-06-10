@@ -239,7 +239,7 @@ const getOrderStatusUi = (status: string) => {
     case 'CANCELLED':
       return { label: 'Da huy', bg: 'bg-red-50', text: 'text-red-700', icon: 'times-circle-o' as const };
     case 'ISSUE_REPORTED':
-      return { label: 'Co su co', bg: 'bg-orange-50', text: 'text-orange-700', icon: 'warning' as const };
+      return { label: 'Đang tranh chấp', bg: 'bg-orange-50', text: 'text-orange-700', icon: 'warning' as const };
     default:
       return { label: 'Dang xu ly', bg: 'bg-slate-50', text: 'text-slate-700', icon: 'info-circle' as const };
   }
@@ -1125,8 +1125,15 @@ export default function ProfileScreen() {
       setReviewingOrder(null);
       setReviewRating(0);
       setReviewComment('');
-    } catch {
-      // no-op
+    } catch (err: any) {
+      // Chống đánh giá trùng: BE có @@unique([order_id, reviewer_id]).
+      const status = err?.response?.status;
+      const body = JSON.stringify(err?.response?.data ?? '');
+      if (status === 409 || /unique|duplicate|P2002|đã đánh giá/i.test(body)) {
+        Alert.alert('Đã đánh giá', 'Bạn đã đánh giá đơn hàng này rồi. Mỗi đơn chỉ được đánh giá một lần.');
+      } else {
+        Alert.alert('Lỗi', err?.response?.data?.message ?? 'Gửi đánh giá thất bại. Vui lòng thử lại.');
+      }
     } finally {
       setCreatingReview(false);
     }
@@ -2385,6 +2392,17 @@ export default function ProfileScreen() {
                     <Text className={`font-bold ${reportingIssue ? 'text-slate-500' : 'text-orange-600'}`}>
                       {reportingIssue ? 'Dang bao cao...' : 'Chua nhan duoc hang: Bao cao su co'}
                     </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="rounded-xl py-3 items-center bg-[#16A34A]"
+                    onPress={() => {
+                      const id = selectedOrder.id;
+                      setSelectedOrder(null);
+                      // Route typed bằng expo-router typegen lúc `expo start`; cast để tsc qua trước khi typegen chạy.
+                      router.push(`/dispute/${id}` as never);
+                    }}
+                  >
+                    <Text className="font-bold text-white">Gửi khiếu nại (kèm ảnh bằng chứng)</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}

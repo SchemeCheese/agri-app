@@ -46,7 +46,7 @@ const SELLER_STATUS_FILTERS: Array<{ key: SellerStatusKey; label: string }> = [
   { key: 'CONFIRMED', label: 'Cho van chuyen' },
   { key: 'SHIPPING', label: 'Dang giao' },
   { key: 'COMPLETED', label: 'Da giao' },
-  { key: 'ISSUE_REPORTED', label: 'Co su co' },
+  { key: 'ISSUE_REPORTED', label: 'Đang tranh chấp' },
   { key: 'CANCELLED', label: 'Da huy' },
   { key: 'FAILED', label: 'That lac' },
 ];
@@ -67,7 +67,7 @@ const getStatusText = (status: string) => {
   if (status === 'CONFIRMED') return 'Cho van chuyen';
   if (status === 'SHIPPING') return 'Dang giao';
   if (status === 'COMPLETED') return 'Da giao';
-  if (status === 'ISSUE_REPORTED') return 'Co su co';
+  if (status === 'ISSUE_REPORTED') return 'Đang tranh chấp';
   if (status === 'CANCELLED') return 'Da huy';
   if (status === 'FAILED') return 'That lac';
   return status;
