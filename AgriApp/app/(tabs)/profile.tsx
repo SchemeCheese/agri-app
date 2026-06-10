@@ -999,6 +999,9 @@ export default function ProfileScreen() {
       );
       const payUrl = res.data?.payUrl || res.data?.deeplink;
       if (payUrl) {
+        // Expo Go limitation: Custom scheme deeplink-back is not supported without a
+        // standalone build. Relying on API polling/web redirect (MOMO_REDIRECT_URL →
+        // FE payment result page). Mở payUrl ra trình duyệt/ứng dụng MoMo bên ngoài.
         await Linking.openURL(payUrl);
       } else {
         Alert.alert('Loi', 'Khong nhan duoc URL thanh toan tu MoMo.');
