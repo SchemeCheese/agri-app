@@ -37,26 +37,23 @@ export default function LoginScreen() {
 
   const { response: googleResponse, promptAsync, isConfigured: googleConfigured, isUnsupportedEnv: googleUnsupported, syncWithBackend } = useGoogleAuth();
 
-  // Điều hướng sau khi đã có phiên đầy đủ (giữ returnTo/ids cho luồng checkout).
+  // Sau khi có phiên đầy đủ: về tab gốc — tab layout tự đổi theo activeRole
+  // (BUYER → Trang chủ; SELLER → Tổng quan + tab Quản lý bán hàng; ADMIN → về trang
+  // chủ vì app không có portal admin, admin dùng web). Giữ luồng checkout.
   const goAfterSession = () => {
     if (params.returnTo === '/checkout') {
       router.replace({ pathname: '/checkout', params: params.ids ? { ids: params.ids } : undefined });
     } else {
-      router.replace('/profile');
+      router.replace('/');
     }
   };
 
-  // Tài khoản nhiều vai trò → chuyển sang màn chọn workspace, mang theo tempToken.
-  const goToRoleSelect = (tempToken: string, allowedRoles?: string[]) => {
-    router.replace({
-      pathname: '/auth/select-role',
-      params: {
-        tempToken,
-        allowedRoles: (allowedRoles ?? []).join(','),
-        ...(params.returnTo ? { returnTo: params.returnTo } : {}),
-        ...(params.ids ? { ids: params.ids } : {}),
-      },
-    });
+  // Tài khoản sở hữu cả BUYER + SELLER: KHÔNG hỏi chọn vai trò nữa — tự vào
+  // workspace MUA HÀNG. Muốn sang bán hàng: dùng nút "Đổi vai trò" ở tab Tài khoản.
+  const autoSelectBuyer = async (tempToken: string) => {
+    const { data } = await api.post('/auth/select-role', { tempToken, role: 'BUYER' });
+    setSession({ user: data.user, accessToken: data.access_token });
+    goAfterSession();
   };
 
   // expo-auth-session promptAsync resolves *before* the response state lands —
@@ -80,7 +77,7 @@ export default function LoginScreen() {
       try {
         const synced = await syncWithBackend(idToken);
         if (synced.requiresRoleSelection && synced.tempToken) {
-          goToRoleSelect(synced.tempToken, synced.allowedRoles);
+          await autoSelectBuyer(synced.tempToken);
           return;
         }
         setSession({ user: synced.user, accessToken: synced.access_token! });
@@ -110,17 +107,6 @@ export default function LoginScreen() {
     }
   };
 
-  const fillCredential = (role: 'buyer' | 'seller') => {
-    if (role === 'buyer') {
-      setEmail('khach@gmail.com');
-      setPassword('123456');
-      return;
-    }
-
-    setEmail('shop2@gmail.com');
-    setPassword('123456');
-  };
-
   const handleLogin = async () => {
     if (!email.trim() || !password) {
       setErrorText('Vui lòng nhập đầy đủ email và mật khẩu.');
@@ -137,9 +123,9 @@ export default function LoginScreen() {
       });
 
       const data = response.data;
-      // Sở hữu cả 2 vai trò → BE trả tempToken, chuyển sang màn chọn workspace.
+      // Sở hữu cả 2 vai trò → tự vào workspace MUA HÀNG (không hỏi chọn vai trò).
       if (data.requiresRoleSelection && data.tempToken) {
-        goToRoleSelect(data.tempToken, data.allowedRoles);
+        await autoSelectBuyer(data.tempToken);
         return;
       }
 
@@ -172,24 +158,7 @@ export default function LoginScreen() {
             Vui lòng đăng nhập để quản lý đơn hàng và thanh toán.
           </Text>
 
-          <View className="flex-row gap-3 mt-6">
-            <TouchableOpacity
-              className="flex-1 bg-blue-50 border border-blue-100 rounded-xl py-3.5 items-center"
-              activeOpacity={0.85}
-              onPress={() => fillCredential('buyer')}
-            >
-              <Text className="text-blue-700 font-bold">Test Khách</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="flex-1 bg-green-50 border border-green-100 rounded-xl py-3.5 items-center"
-              activeOpacity={0.85}
-              onPress={() => fillCredential('seller')}
-            >
-              <Text className="text-green-700 font-bold">Test Chủ Shop</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View className="mt-5 gap-3">
+          <View className="mt-6 gap-3">
             <View className="flex-row items-center rounded-xl border border-slate-300 px-3 py-3 bg-slate-50">
               <FontAwesome name="envelope-o" size={16} color="#64748B" />
               <TextInput
