@@ -132,6 +132,11 @@ export default function SellerDetailScreen() {
                 <View className="ml-3 flex-1 pb-1">
                   <Text className="font-black text-slate-900" numberOfLines={1}>{shopName}</Text>
                   <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>{data.shop?.address ?? data.shop?.location ?? 'Chua cap nhat dia chi'}</Text>
+                  {data.shop?.trust_status === 'WARNING' ? (
+                    <View className="mt-1 self-start bg-yellow-50 border border-yellow-300 rounded-full px-2 py-0.5">
+                      <Text className="text-[10px] font-bold text-yellow-700">⚠️ Shop đang bị cảnh báo</Text>
+                    </View>
+                  ) : null}
                 </View>
                 <View className="mb-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-1 flex-row items-center">
                   <FontAwesome name="check-circle" size={10} color="#15803D" />

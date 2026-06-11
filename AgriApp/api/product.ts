@@ -61,6 +61,7 @@ export type SellerDetail = {
     description?: string;
     store_description?: string;
     isVerified?: boolean;
+    trust_status?: 'VERIFIED' | 'NORMAL' | 'WARNING' | 'RESTRICTED';
     rating?: number;
     reviewCount?: number;
     totalSold?: number;
