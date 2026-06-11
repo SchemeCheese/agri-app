@@ -134,6 +134,26 @@ export default function ProductDetailScreen() {
     });
   }, [product?.category, product?.id, track]);
 
+  // Long-view tracking: đo thời gian dừng trên trang chi tiết. Khi rời trang
+  // (đổi sản phẩm / unmount), nếu xem ≥10s thì gửi kèm durationSeconds — engine
+  // recommendation coi >120s là tín hiệu quan tâm mạnh (long-view, +25 điểm).
+  const viewStartRef = useRef(0);
+  useEffect(() => {
+    if (!product?.id) return;
+    const pid = product.id;
+    viewStartRef.current = Date.now();
+    return () => {
+      const dwellSec = Math.round((Date.now() - viewStartRef.current) / 1000);
+      if (dwellSec >= 10) {
+        void track('VIEW_PRODUCT', {
+          targetId: pid,
+          metadata: { context: 'detail_dwell', durationSeconds: dwellSec },
+          weight: 1,
+        });
+      }
+    };
+  }, [product?.id, track]);
+
   const isUnavailable = (product?.is_active === false) || (product?.stock ?? 0) <= 0;
 
   const extractErrorMessage = (error: unknown, fallback: string) => {
