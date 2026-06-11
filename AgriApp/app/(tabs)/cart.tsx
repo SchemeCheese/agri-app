@@ -356,7 +356,10 @@ export default function CartScreen() {
                     </View>
                   </View>
 
-                  <Text className="text-[#16A34A] font-black text-2xl mt-2">{formatPrice(Number(order.final_total_price || 0))}</Text>
+                  <View className="flex-row items-baseline mt-2">
+                    <Text className="text-xs text-slate-400 mr-1.5">Tong tien</Text>
+                    <Text className="text-emerald-600 font-black text-xl">{formatPrice(Number(order.final_total_price || 0))}</Text>
+                  </View>
 
                   <View className="mt-3 flex-row gap-2">
                     {order.status === 'PENDING' ? (

@@ -1,6 +1,5 @@
 import { FontAwesome } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -44,7 +43,6 @@ type SellerDashboard = {
 };
 
 export default function SellerCenterScreen() {
-  const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const accessToken = useAuthStore((state) => state.accessToken);
   const isSeller = user?.role === 'SELLER';
@@ -204,35 +202,6 @@ export default function SellerCenterScreen() {
             <StatCell icon="shopping-cart" label="Don hang" value={String(Number(dashboard?.totalOrders || 0))} />
             <View className="w-px bg-slate-100 my-2" />
             <StatCell icon="star" label="Danh gia" value={avgRating ?? '—'} />
-          </View>
-        </View>
-
-        {/* ── Trợ lý AI (nổi bật) ──────────────────────────────────────── */}
-        <View className="px-4 mt-4">
-          <View className="rounded-2xl bg-indigo-600 p-4">
-            <View className="flex-row items-center">
-              <View className="w-10 h-10 rounded-full bg-white/20 items-center justify-center">
-                <FontAwesome name="magic" size={18} color="#FFFFFF" />
-              </View>
-              <View className="ml-3 flex-1">
-                <Text className="text-white font-black text-base">Tro ly AI AgriBot</Text>
-                <Text className="text-indigo-100 text-xs mt-0.5">Tu van ban hang, gia ca, ton kho — goi y ca san pham</Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              className="bg-white rounded-xl py-3 items-center mt-3 flex-row justify-center"
-              onPress={() => router.push('/ai-chat')}
-              activeOpacity={0.85}
-            >
-              <FontAwesome name="comments" size={14} color="#4F46E5" />
-              <Text className="text-indigo-700 font-bold ml-2">Chat voi tro ly AI</Text>
-            </TouchableOpacity>
-            <View className="flex-row items-center mt-3">
-              <FontAwesome name="lightbulb-o" size={12} color="#C7D2FE" />
-              <Text className="text-indigo-100 text-[11px] ml-1.5 flex-1">
-                Meo: khi them san pham, bam "AI Goi y tu anh" de AI tu dien ten, gia, danh muc.
-              </Text>
-            </View>
           </View>
         </View>
 

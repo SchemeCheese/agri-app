@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Alert, FlatList, Image, ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -71,6 +71,7 @@ export default function SearchScreen() {
   const [sellerProducts, setSellerProducts] = useState<SellerProduct[]>([]);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [creatingProduct, setCreatingProduct] = useState(false);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
   const [productFormMode, setProductFormMode] = useState<ProductFormMode>('create');
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -232,6 +233,53 @@ export default function SearchScreen() {
     setSelectedImageUri(currentImages[0] || '');
     setSelectedImageSource(currentImages.length > 0 ? 'url' : null);
     setCreateModalVisible(true);
+  };
+
+  // ── Magic Fill: AI gợi ý sản phẩm từ ảnh (POST /seller/suggest-product) ──────
+  // Giống web ProductForm: gửi ảnh → Gemini vision gợi ý tên/giá/đơn vị/danh mục,
+  // rồi tự điền các field còn trống. KHÔNG đè nội dung seller đã gõ.
+  const suggestProductFromImage = async () => {
+    if (!accessToken || aiSuggesting) return;
+    if (selectedImageSource !== 'file' || !selectedImageUri) {
+      Alert.alert('Can chon anh', 'Hay chon 1 anh san pham tu thu vien/tep de AI phan tich (link URL khong dung duoc).');
+      return;
+    }
+    setAiSuggesting(true);
+    try {
+      const fileName = selectedImageUri.split('/').pop() || `ai-${Date.now()}.jpg`;
+      const form = new FormData();
+      // Field `file` khớp FileInterceptor('file') ở BE. KHÔNG set Content-Type để
+      // interceptor/RN tự gắn boundary cho multipart (giống profile.tsx đang chạy).
+      form.append('file', { uri: selectedImageUri, name: fileName, type: getMimeTypeFromUri(fileName) } as any);
+
+      const { data } = await api.post('/seller/suggest-product', form, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const hasSuggestion = !!(data?.name || data?.description || data?.unit || data?.suggestedPrice || data?.categoryId);
+      if (!hasSuggestion) {
+        Alert.alert('AI goi y', 'AI chua nhan ra san pham trong anh. Vui long nhap tay.');
+        return;
+      }
+      // Chỉ điền field còn trống.
+      if (data.name && !name.trim()) setName(data.name);
+      if (data.description && !description.trim()) setDescription(data.description);
+      if (data.unit) setUnit(data.unit);
+      if (data.suggestedPrice && !price.trim()) setPrice(String(data.suggestedPrice));
+      if (data.categoryId != null) {
+        const matched = categoryOptions.find((c) => String(c.id) === String(data.categoryId));
+        if (matched) setCategoryId(matched.id);
+      }
+      Alert.alert(
+        'AI goi y',
+        typeof data.confidence === 'number' && data.confidence < 0.5
+          ? 'AI khong chac chan ve san pham nay, hay kiem tra ky.'
+          : 'AI da dien thong tin goi y. Vui long kiem tra lai truoc khi dang.',
+      );
+    } catch (e: any) {
+      Alert.alert('Loi', e?.response?.data?.message || 'Khong phan tich duoc anh. Vui long thu lai hoac nhap tay.');
+    } finally {
+      setAiSuggesting(false);
+    }
   };
 
   const submitProduct = async () => {
@@ -487,14 +535,14 @@ export default function SearchScreen() {
   if (isSeller) {
     return (
       <ScreenContainer>
-        <View className="px-4 pt-4 pb-3 bg-[#F1F5F9] border-b border-slate-200 flex-row items-center justify-between">
-          <View>
-            <Text className="text-4xl font-black text-slate-900">San pham</Text>
-            <Text className="text-sm text-slate-500 mt-1">Quan ly kho hang va danh muc san pham</Text>
+        <View className="px-4 pt-4 pb-3 bg-white border-b border-slate-100 flex-row items-center justify-between">
+          <View className="flex-1 pr-3">
+            <Text className="text-2xl font-black text-slate-900">San pham</Text>
+            <Text className="text-xs text-slate-500 mt-0.5">Quan ly kho hang va danh muc</Text>
           </View>
-          <TouchableOpacity className="bg-emerald-600 rounded-xl px-4 py-3 flex-row items-center" onPress={openCreateProductModal}>
-            <FontAwesome name="plus" size={14} color="#FFFFFF" />
-            <Text className="text-white font-bold text-base ml-2">Them san pham moi</Text>
+          <TouchableOpacity className="bg-emerald-600 rounded-xl px-3.5 py-2.5 flex-row items-center" onPress={openCreateProductModal}>
+            <FontAwesome name="plus" size={13} color="#FFFFFF" />
+            <Text className="text-white font-bold text-sm ml-1.5">Them</Text>
           </TouchableOpacity>
         </View>
 
@@ -566,25 +614,25 @@ export default function SearchScreen() {
                   </View>
 
                   <View className="p-3">
-                    <Text className={`text-slate-900 text-xl font-black ${p.is_active ? 'text-slate-900' : 'text-slate-500'}`} numberOfLines={1}>{p.name}</Text>
-                    <Text className="text-slate-400 text-xs mt-0.5" numberOfLines={1}>#{p.id.slice(-8).toUpperCase()}</Text>
+                    <Text className={`text-base font-bold ${p.is_active ? 'text-slate-900' : 'text-slate-500'}`} numberOfLines={1}>{p.name}</Text>
+                    <Text className="text-slate-400 text-[10px] mt-0.5" numberOfLines={1}>#{p.id.slice(-8).toUpperCase()}</Text>
 
-                    <View className="flex-row items-center justify-between mt-2">
-                      <Text className="text-[#16A34A] font-black text-3xl">{formatPrice(Number(p.price || 0))}</Text>
-                      <View className="rounded-lg px-2 py-1 bg-amber-50 flex-row items-center">
-                        <FontAwesome name="star" size={12} color="#EAB308" />
-                        <Text className="ml-1 text-amber-600 font-bold text-xs">5.0</Text>
+                    <View className="flex-row items-center justify-between mt-1.5">
+                      <Text className="text-emerald-600 font-black text-lg">{formatPrice(Number(p.price || 0))}</Text>
+                      <View className="rounded-lg px-1.5 py-0.5 bg-amber-50 flex-row items-center">
+                        <FontAwesome name="star" size={10} color="#EAB308" />
+                        <Text className="ml-1 text-amber-600 font-bold text-[11px]">5.0</Text>
                       </View>
                     </View>
 
-                    <View className="flex-row items-center justify-between mt-2">
+                    <View className="flex-row items-center justify-between mt-2 pt-2 border-t border-slate-50">
                       <View className="flex-row items-center">
-                        <FontAwesome name="cube" size={12} color="#94A3B8" />
-                        <Text className="text-base text-slate-500 ml-1">Kho: <Text className="font-black text-slate-800">{Number(p.stock || 0)}</Text></Text>
+                        <FontAwesome name="cube" size={11} color="#94A3B8" />
+                        <Text className="text-xs text-slate-500 ml-1">Kho <Text className="font-bold text-slate-800">{Number(p.stock || 0)}</Text></Text>
                       </View>
                       <View className="flex-row items-center">
-                        <FontAwesome name="eye" size={12} color="#94A3B8" />
-                        <Text className="text-base text-slate-500 ml-1">Ban: <Text className="font-black text-slate-800">{Number(p.sold || 0)}</Text></Text>
+                        <FontAwesome name="line-chart" size={11} color="#94A3B8" />
+                        <Text className="text-xs text-slate-500 ml-1">Ban <Text className="font-bold text-slate-800">{Number(p.sold || 0)}</Text></Text>
                       </View>
                     </View>
                   </View>
@@ -645,6 +693,19 @@ export default function SearchScreen() {
                   <Text className="text-blue-700 font-bold">Tu tep</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* ✨ Magic Fill — AI gợi ý tên/giá/mô tả/danh mục từ ảnh (như web) */}
+              <TouchableOpacity
+                className={`rounded-xl py-3 items-center mb-2 flex-row justify-center ${selectedImageSource !== 'file' || aiSuggesting ? 'bg-slate-300' : 'bg-purple-600'}`}
+                onPress={() => void suggestProductFromImage()}
+                disabled={selectedImageSource !== 'file' || aiSuggesting}
+              >
+                {aiSuggesting ? <ActivityIndicator color="#fff" /> : <FontAwesome name="magic" size={14} color="#fff" />}
+                <Text className="text-white font-bold ml-2">{aiSuggesting ? 'Dang phan tich anh...' : 'AI Goi y tu anh'}</Text>
+              </TouchableOpacity>
+              {selectedImageSource !== 'file' ? (
+                <Text className="text-[11px] text-slate-400 mb-3 text-center">Chon anh tu thu vien/tep de AI tu dien ten, gia, danh muc.</Text>
+              ) : null}
 
               <TextInput className="border border-slate-200 rounded-xl px-3 py-3 mb-3" placeholder="Ten san pham" value={name} onChangeText={setName} />
               <TextInput className="border border-slate-200 rounded-xl px-3 py-3 mb-3" placeholder="Mo ta" value={description} onChangeText={setDescription} />
