@@ -125,8 +125,8 @@ export default function CheckoutScreen() {
           price: Number(params.negotiatedPrice ?? 0),
           unit: params.unit ?? 'kg',
           image: params.image || undefined,
-          shopId: params.sellerId ?? 'unknown',
-          shopName: params.sellerName ?? 'Shop',
+          shopId: params.sellerId || 'unknown',
+          shopName: params.sellerName?.trim() || 'Gian hang chua cap nhat',
         },
       ];
     }
@@ -140,8 +140,8 @@ export default function CheckoutScreen() {
         price: item.product.price ?? 0,
         unit: item.product.unit ?? 'kg',
         image: item.product.images?.[0],
-        shopId: item.product.shop?.id ?? item.product.seller_id ?? 'unknown',
-        shopName: item.product.shop?.store_name ?? 'Shop',
+        shopId: item.product.shop?.id || item.product.seller_id || 'unknown',
+        shopName: item.product.shop?.store_name?.trim() || 'Gian hang chua cap nhat',
       }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isQuoteMode, params.productId, params.productName, params.quantity, params.negotiatedPrice, params.unit, params.image, params.sellerId, params.sellerName, cartItems, ids.join(',')]);
@@ -175,7 +175,7 @@ export default function CheckoutScreen() {
     return Object.entries(shopGroups).map(([shopId, items]) => {
       const subtotal = subtotalByShop[shopId] ?? 0;
       const discount = voucherByShop[shopId]?.discountAmount ?? 0;
-      const shopName = items[0]?.shopName ?? 'Shop';
+      const shopName = items[0]?.shopName?.trim() || 'Gian hang chua cap nhat';
 
       return {
         seller_id: shopId,
@@ -563,7 +563,7 @@ export default function CheckoutScreen() {
             </View>
 
             {Object.entries(shopGroups).map(([shopId, items]) => {
-              const shopName = items[0]?.shopName ?? 'Shop';
+              const shopName = items[0]?.shopName?.trim() || 'Gian hang chua cap nhat';
               const shopSubtotal = subtotalByShop[shopId] ?? 0;
               const voucherState = voucherByShop[shopId] ?? getDefaultVoucherState();
               const availableShopVouchers = savedVouchers.filter(

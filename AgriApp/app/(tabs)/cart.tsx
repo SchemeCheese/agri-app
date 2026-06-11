@@ -121,7 +121,8 @@ export default function CartScreen() {
 
   const groupedByShop = useMemo(() => {
     return cartItems.reduce<Record<string, typeof cartItems>>((acc, item) => {
-      const shopId = item.product.shop?.id ?? item.product.seller_id ?? 'unknown-shop';
+      // `||` (khong `??`) de coi chuoi rong '' la thieu, tranh gom nham nhom.
+      const shopId = item.product.shop?.id || item.product.seller_id || 'unknown-shop';
       if (!acc[shopId]) acc[shopId] = [];
       acc[shopId].push(item);
       return acc;
@@ -491,7 +492,7 @@ export default function CartScreen() {
         ) : null}
 
         {Object.entries(groupedByShop).map(([shopId, items]) => {
-          const shopName = items[0]?.product.shop?.store_name ?? `Shop #${shopId.slice(-6)}`;
+          const shopName = items[0]?.product.shop?.store_name?.trim() || 'Gian hang chua cap nhat';
           const allShopSelected = items.every((item) => selectedIds.includes(item.product.id));
 
           return (
