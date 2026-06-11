@@ -381,8 +381,9 @@ export default function CartScreen() {
                     ) : null}
 
                     {order.status === 'ISSUE_REPORTED' ? (
+                      // Seller chỉ gửi giải trình cho Admin — KHÔNG tự quyết lỗi/hoàn tiền.
                       <TouchableOpacity className={`flex-1 rounded-xl py-2.5 items-center ${processingOrderId === order.id ? 'bg-slate-300' : 'bg-orange-500'}`} onPress={() => handleConfirmSellerAction(order.id, 'confirm-lost')} disabled={processingOrderId === order.id}>
-                        <Text className="text-white font-bold">Xac nhan that lac</Text>
+                        <Text className="text-white font-bold">Gui giai trinh cho Admin</Text>
                       </TouchableOpacity>
                     ) : null}
 

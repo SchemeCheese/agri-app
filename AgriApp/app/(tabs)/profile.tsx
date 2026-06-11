@@ -2464,12 +2464,13 @@ export default function ProfileScreen() {
               ) : null}
 
               {isSeller && selectedOrder?.status === 'ISSUE_REPORTED' ? (
+                // Seller chỉ gửi giải trình cho Admin phân xử — KHÔNG tự set FAILED/hoàn tiền.
                 <TouchableOpacity
                   className={`rounded-xl py-3 items-center ${processingSellerOrder ? 'bg-slate-300' : 'bg-orange-500'}`}
                   onPress={() => handleSellerOrderAction('confirm-lost', selectedOrder.id)}
                   disabled={processingSellerOrder}
                 >
-                  <Text className="text-white font-bold">Xac nhan that lac (FAILED)</Text>
+                  <Text className="text-white font-bold">Gui giai trinh cho Admin</Text>
                 </TouchableOpacity>
               ) : null}
             </ScrollView>
