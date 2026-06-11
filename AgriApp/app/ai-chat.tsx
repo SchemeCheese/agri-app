@@ -21,9 +21,13 @@ import {
   fetchAISession,
   fetchAISessions,
   subscribeAIEvents,
+  type ActionableBlock,
+  type ActionableProduct,
+  type ActionableShop,
   type AISessionSummary,
 } from '@/services/aiSocket';
 import { useAuthStore } from '@/store/authStore';
+import { resolveImageUrl } from '@/utils/image';
 import { ImagePickPermissionError, pickAndProcessImage, type ProcessedImage } from '@/utils/pickImage';
 
 type Message = {
@@ -33,6 +37,8 @@ type Message = {
   imageUri?: string;
   pending?: boolean;
   error?: boolean;
+  // Thẻ sản phẩm/cửa hàng do tool AI trả về (giống web). Mỗi type giữ block mới nhất.
+  actionableData?: ActionableBlock[];
 };
 
 export default function AIChatScreen() {
@@ -77,6 +83,18 @@ export default function AIChatScreen() {
             setThinkingLabel(null);
           },
           onToolStart: ({ label }) => setThinkingLabel(label),
+          onActionableData: (block) => {
+            // Chỉ render type đã có card; cùng type thì replace (tool refine round trước).
+            if (block?.type !== 'products' && block?.type !== 'shops') return;
+            if (!Array.isArray(block?.data) || block.data.length === 0) return;
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== streamingIdRef.current) return m;
+                const others = (m.actionableData ?? []).filter((b) => b.type !== block.type);
+                return { ...m, actionableData: [...others, block] };
+              }),
+            );
+          },
           onToken: ({ chunk, sessionId: sid }) => {
             if (thinkingLabel) setThinkingLabel(null);
             setSessionId((cur) => cur ?? sid);
@@ -346,6 +364,37 @@ export default function AIChatScreen() {
                           {m.content}
                         </Text>
                       )}
+                      {/* Thẻ sản phẩm/cửa hàng từ tool AI — link thật từ DB */}
+                      {m.role === 'ASSISTANT' &&
+                        (m.actionableData ?? []).map((block) => (
+                          <ScrollView
+                            key={block.type}
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            className="mt-2 -mx-1"
+                            contentContainerStyle={{ paddingHorizontal: 4, gap: 8 }}
+                          >
+                            {block.type === 'products'
+                              ? block.data.map((p) => (
+                                  <ProductMiniCard
+                                    key={p.id}
+                                    product={p}
+                                    onPress={() =>
+                                      router.push({ pathname: '/product/[id]', params: { id: p.id } })
+                                    }
+                                  />
+                                ))
+                              : block.data.map((s) => (
+                                  <ShopMiniCard
+                                    key={s.seller_id}
+                                    shop={s}
+                                    onPress={() =>
+                                      router.push({ pathname: '/shop/[id]', params: { id: s.seller_id } })
+                                    }
+                                  />
+                                ))}
+                          </ScrollView>
+                        ))}
                     </>
                   )}
                 </View>
@@ -418,5 +467,77 @@ export default function AIChatScreen() {
         </KeyboardAvoidingView>
       </View>
     </ScreenContainer>
+  );
+}
+
+// ── Actionable cards (giống web AIAssistantPanel) ────────────────────────────
+const formatVnd = (n: number) => `${Number(n).toLocaleString('vi-VN')}d`;
+
+/** Thẻ sản phẩm mini trong bong bóng AI — bấm để mở trang chi tiết. */
+function ProductMiniCard({
+  product,
+  onPress,
+}: {
+  product: ActionableProduct;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      className="w-32 rounded-xl border border-slate-200 bg-white overflow-hidden"
+    >
+      <View className="h-20 w-full bg-slate-50 items-center justify-center">
+        {product.image_url ? (
+          <Image
+            source={{ uri: resolveImageUrl(product.image_url) }}
+            className="h-full w-full"
+            resizeMode="cover"
+          />
+        ) : (
+          <FontAwesome name="leaf" size={18} color="#CBD5E1" />
+        )}
+      </View>
+      <View className="p-2">
+        <Text className="text-xs font-semibold text-slate-800" numberOfLines={2}>
+          {product.name}
+        </Text>
+        <Text className="text-xs font-bold text-green-700 mt-1">
+          {formatVnd(product.price)}
+          {product.unit ? <Text className="font-normal text-slate-400">/{product.unit}</Text> : null}
+        </Text>
+        <Text className="text-[11px] font-semibold text-green-600 mt-1">Xem chi tiet ›</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+/** Thẻ cửa hàng mini trong bong bóng AI — bấm để mở trang shop. */
+function ShopMiniCard({ shop, onPress }: { shop: ActionableShop; onPress: () => void }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      className="w-40 rounded-xl border border-slate-200 bg-white p-2.5"
+    >
+      <View className="flex-row items-center gap-2">
+        <View className="h-9 w-9 rounded-full bg-green-50 border border-slate-100 overflow-hidden items-center justify-center">
+          {shop.avatar_url ? (
+            <Image source={{ uri: resolveImageUrl(shop.avatar_url) }} className="h-full w-full" resizeMode="cover" />
+          ) : (
+            <FontAwesome name="shopping-basket" size={14} color="#16A34A" />
+          )}
+        </View>
+        <View className="flex-1">
+          <Text className="text-xs font-semibold text-slate-800" numberOfLines={1}>
+            {shop.shop_name || 'Cua hang'}
+          </Text>
+          {typeof shop.avg_rating === 'number' && shop.avg_rating > 0 ? (
+            <Text className="text-[11px] text-amber-500">★ {shop.avg_rating}</Text>
+          ) : null}
+        </View>
+      </View>
+      <Text className="text-[11px] font-semibold text-green-600 mt-1.5">Den cua hang ›</Text>
+    </TouchableOpacity>
   );
 }

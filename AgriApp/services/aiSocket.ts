@@ -114,12 +114,36 @@ export const askAI = async (accessToken: string, payload: AskPayload) => {
   socket.emit('ai:ask', payload as unknown as Record<string, unknown>);
 };
 
+// ── Actionable entity cards (giống web AIAssistantPanel) ─────────────────────
+// BE phát `ai:actionable_data` khi tool product-search / seller-recommendation
+// trả về kết quả — link thật từ DB, chống LLM bịa link.
+export type ActionableProduct = {
+  id: string;
+  name: string;
+  price: number;
+  unit?: string | null;
+  image_url?: string | null;
+};
+
+export type ActionableShop = {
+  seller_id: string;
+  shop_name?: string | null;
+  avatar_url?: string | null;
+  avg_rating?: number | null;
+  verdict?: string | null;
+};
+
+export type ActionableBlock =
+  | { type: 'products'; data: ActionableProduct[] }
+  | { type: 'shops'; data: ActionableShop[] };
+
 export const subscribeAIEvents = async (
   accessToken: string,
   handlers: {
     onThinking?: (payload: { sessionId: string | null }) => void;
     onToolStart?: (payload: { sessionId: string; toolName: string; label: string }) => void;
     onToken?: (payload: { chunk: string; sessionId: string }) => void;
+    onActionableData?: (payload: ActionableBlock) => void;
     onComplete?: (payload: { sessionId: string; intent?: string }) => void;
     onError?: (payload: { code: string; message: string }) => void;
   },
@@ -128,6 +152,7 @@ export const subscribeAIEvents = async (
   if (handlers.onThinking) socket.on('ai:thinking', handlers.onThinking);
   if (handlers.onToolStart) socket.on('ai:tool_start', handlers.onToolStart);
   if (handlers.onToken) socket.on('ai:token', handlers.onToken);
+  if (handlers.onActionableData) socket.on('ai:actionable_data', handlers.onActionableData);
   if (handlers.onComplete) socket.on('ai:complete', handlers.onComplete);
   if (handlers.onError) socket.on('ai:error', handlers.onError);
 
@@ -135,6 +160,7 @@ export const subscribeAIEvents = async (
     if (handlers.onThinking) socket.off('ai:thinking', handlers.onThinking);
     if (handlers.onToolStart) socket.off('ai:tool_start', handlers.onToolStart);
     if (handlers.onToken) socket.off('ai:token', handlers.onToken);
+    if (handlers.onActionableData) socket.off('ai:actionable_data', handlers.onActionableData);
     if (handlers.onComplete) socket.off('ai:complete', handlers.onComplete);
     if (handlers.onError) socket.off('ai:error', handlers.onError);
   };
