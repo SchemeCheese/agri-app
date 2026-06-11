@@ -339,6 +339,7 @@ export default function ProfileScreen() {
   const [newProductOrigin, setNewProductOrigin] = useState('');
   const [newProductDescription, setNewProductDescription] = useState('');
   const [newProductImages, setNewProductImages] = useState<{ uri: string; mimeType?: string | null; fileName?: string | null }[]>([]);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
   const [editingProduct, setEditingProduct] = useState<SellerProduct | null>(null);
   const [editProductImages, setEditProductImages] = useState<{ uri: string; mimeType?: string | null; fileName?: string | null }[]>([]);
   const [savingEditProduct, setSavingEditProduct] = useState(false);
@@ -515,6 +516,46 @@ export default function ProfileScreen() {
     const picked = result.assets.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName }));
     if (target === 'create') setNewProductImages((prev) => [...prev, ...picked].slice(0, 5));
     else setEditProductImages((prev) => [...prev, ...picked].slice(0, 5));
+  };
+
+  // ─── Magic Fill: AI gợi ý sản phẩm từ ảnh (POST /seller/suggest-product) ──────
+  const suggestProductFromImage = async () => {
+    const img = newProductImages[0];
+    if (!img || aiSuggesting) return;
+    setAiSuggesting(true);
+    try {
+      const mime = img.mimeType || 'image/jpeg';
+      const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+      const form = new FormData();
+      // Field `file` khớp FileInterceptor('file') ở BE. Interceptor tự xoá
+      // Content-Type để RN set boundary cho multipart.
+      form.append('file', { uri: img.uri, name: img.fileName || `ai.${ext}`, type: mime } as any);
+
+      const { data } = await api.post('/seller/suggest-product', form);
+      const hasSuggestion = !!(data?.name || data?.description || data?.unit || data?.suggestedPrice || data?.categoryId);
+      if (!hasSuggestion) {
+        Alert.alert('AI goi y', 'AI chua nhan ra san pham trong anh. Vui long nhap tay.');
+        return;
+      }
+      // Chỉ điền field còn trống — không đè nội dung seller đã gõ.
+      if (data.name && !newProductName.trim()) setNewProductName(data.name);
+      if (data.description && !newProductDescription.trim()) setNewProductDescription(data.description);
+      if (data.unit) setNewProductUnit(data.unit);
+      if (data.suggestedPrice && !newProductPrice.trim()) setNewProductPrice(String(data.suggestedPrice));
+      if (data.categoryId != null) {
+        const matched = categoryOptions.find((c) => String(c.id) === String(data.categoryId));
+        if (matched) setNewProductCategoryId(matched.id);
+      }
+      if (typeof data.confidence === 'number' && data.confidence < 0.5) {
+        Alert.alert('Luu y', 'AI khong chac chan ve san pham nay, hay kiem tra ky.');
+      } else {
+        Alert.alert('AI goi y', 'AI da dien thong tin goi y. Vui long kiem tra lai truoc khi dang.');
+      }
+    } catch (e: any) {
+      Alert.alert('Loi', e?.response?.data?.message || 'Khong phan tich duoc anh. Vui long thu lai hoac nhap tay.');
+    } finally {
+      setAiSuggesting(false);
+    }
   };
 
   const buildProductFormData = (payload: Record<string, string | number | undefined>, images: typeof newProductImages) => {
@@ -1846,6 +1887,19 @@ export default function ProfileScreen() {
                     ) : null}
                   </View>
                 </ScrollView>
+
+                {/* ✨ Magic Fill — bật khi đã chọn ít nhất 1 ảnh */}
+                <TouchableOpacity
+                  className={`rounded-xl py-3 items-center mb-3 flex-row justify-center ${newProductImages.length === 0 || aiSuggesting ? 'bg-slate-300' : 'bg-purple-600'}`}
+                  onPress={() => void suggestProductFromImage()}
+                  disabled={newProductImages.length === 0 || aiSuggesting}
+                >
+                  {aiSuggesting ? <ActivityIndicator color="#fff" /> : <FontAwesome name="magic" size={14} color="#fff" />}
+                  <Text className="text-white font-bold ml-2">{aiSuggesting ? 'Dang phan tich anh...' : 'AI Goi y tu anh'}</Text>
+                </TouchableOpacity>
+                {newProductImages.length === 0 ? (
+                  <Text className="text-[11px] text-slate-400 mb-2 text-center">Them 1 anh san pham de dung AI goi y.</Text>
+                ) : null}
 
                 <TouchableOpacity
                   className={`rounded-xl py-3 items-center ${creatingProduct || !newProductName.trim() || !newProductPrice.trim() || !newProductStock.trim() ? 'bg-slate-300' : 'bg-emerald-600'}`}
