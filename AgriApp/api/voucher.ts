@@ -16,10 +16,8 @@ export type ShopVoucher = {
   is_active?: boolean;
 };
 
-export const getShopVouchers = async (accessToken: string, shopId: string) => {
-  const response = await api.get<ShopVoucher[]>(`/vouchers/shop/${shopId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+export const getShopVouchers = async (shopId: string) => {
+  const response = await api.get<ShopVoucher[]>(`/vouchers/shop/${shopId}`);
 
   return Array.isArray(response.data) ? response.data : [];
 };

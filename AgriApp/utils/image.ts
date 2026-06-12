@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/api/client';
 
-const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
+const DISPLAYABLE_URL_REGEX = /^(?:https?:\/\/|data:image\/)/i;
 
 /**
  * Chuẩn hoá URL ảnh hiển thị.
@@ -12,7 +12,7 @@ const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
  */
 export const resolveImageUrl = (image?: string) => {
   if (!image) return 'https://via.placeholder.com/400x300?text=Agri';
-  if (ABSOLUTE_URL_REGEX.test(image)) return image;
+  if (DISPLAYABLE_URL_REGEX.test(image)) return image;
 
   const base = API_BASE_URL || 'http://localhost:3001';
   return `${base}${image.startsWith('/') ? '' : '/'}${image}`;

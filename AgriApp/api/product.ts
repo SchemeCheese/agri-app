@@ -36,6 +36,7 @@ export type Product = {
     store_name?: string;
     avatar_url?: string | null;
     location?: string | null;
+    description?: string | null;
     isVerified?: boolean;
   };
 };
@@ -44,6 +45,23 @@ export type CategorySummary = {
   id: string;
   name: string;
   count: number;
+};
+
+export type ShopSearchResult = {
+  id: string;
+  store_name: string;
+  owner_name?: string;
+  is_verified?: boolean;
+  avatar_url?: string | null;
+  rating?: number;
+  total_reviews?: number;
+  product_count?: number;
+};
+
+export type CombinedSearchResult = {
+  shops: ShopSearchResult[];
+  products: Product[];
+  categories: { id: number; name: string; product_count: number }[];
 };
 
 export type SellerDetail = {
@@ -68,6 +86,7 @@ export type SellerDetail = {
     totalSold?: number;
     totalProducts?: number;
     joinDate?: string;
+    banners?: string[];
   };
   products?: Product[];
 };
@@ -83,8 +102,41 @@ export const getProductById = async (id: string): Promise<Product> => {
 };
 
 export const getSellerById = async (id: string): Promise<SellerDetail> => {
-  const { data } = await api.get<SellerDetail>(`/products/sellers/${id}`);
-  return data;
+  const { data } = await api.get<any>(`/shops/${id}`);
+  return {
+    id: data.id,
+    full_name: data.owner_name ?? data.full_name,
+    averageRating: data.avg_rating,
+    totalSold: data.total_sales,
+    shop: {
+      name: data.store_name,
+      store_name: data.store_name,
+      avatar: data.avatar_url,
+      avatar_url: data.avatar_url,
+      location: data.shop_location_name ?? data.address ?? data.store_address,
+      store_address: data.store_address,
+      address: data.address,
+      description: data.description,
+      store_description: data.description,
+      isVerified: data.is_verified,
+      trust_status: data.trust_status,
+      rating: data.avg_rating,
+      reviewCount: data.total_reviews,
+      totalSold: data.total_sales,
+      totalProducts: data.products?.length ?? 0,
+      banners: Array.isArray(data.banners) ? data.banners.slice(0, 3) : [],
+    },
+    products: data.products ?? [],
+  };
+};
+
+export const searchAll = async (keyword: string): Promise<CombinedSearchResult> => {
+  const { data } = await api.get<CombinedSearchResult>('/search', { params: { q: keyword } });
+  return {
+    shops: data.shops ?? [],
+    products: data.products ?? [],
+    categories: data.categories ?? [],
+  };
 };
 
 export const buildCategoriesFromProducts = (products: Product[]): CategorySummary[] => {

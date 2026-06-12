@@ -22,6 +22,7 @@ import { useProductModerationStore } from '@/store/productModerationStore';
 import { formatPrice } from '@/utils/format';
 import { FontAwesome } from '@expo/vector-icons';
 import { resolveImageUrl } from '@/utils/image';
+import { searchAll, type Product, type ShopSearchResult } from '@/api/product';
 
 const MIN_PRICE = 0;
 const MAX_PRICE = 2000000;
@@ -48,13 +49,6 @@ type ProductFormMode = 'create' | 'edit';
 type SellerFilter = 'ALL' | 'ACTIVE' | 'OUT_OF_STOCK';
 type SellerSort = 'NEWEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'SOLD_DESC';
 
-type ShopSearchResult = {
-  id: string;
-  name: string;
-  avatar?: string | null;
-  matchedProductCount: number;
-};
-
 export default function SearchScreen() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -68,6 +62,8 @@ export default function SearchScreen() {
   const { products, categories, isLoading, isError } = useProducts();
   const addItem = useCartStore((state) => state.addItem);
   const filteredProducts = useProductSearch(products, keyword, selectedCategory);
+  const [remoteSearchProducts, setRemoteSearchProducts] = useState<Product[]>([]);
+  const [remoteSearchShops, setRemoteSearchShops] = useState<ShopSearchResult[]>([]);
   const [sellerProducts, setSellerProducts] = useState<SellerProduct[]>([]);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [creatingProduct, setCreatingProduct] = useState(false);
@@ -436,49 +432,51 @@ export default function SearchScreen() {
       .trim();
 
   const normalizedKeyword = normalizeText(keyword);
+  const hasKeyword = normalizedKeyword.length > 0;
 
-  const visibleShops = useMemo<ShopSearchResult[]>(() => {
-    if (!normalizedKeyword) return [];
+  useEffect(() => {
+    if (!hasKeyword) {
+      setRemoteSearchProducts([]);
+      setRemoteSearchShops([]);
+      return;
+    }
 
-    const groups = new Map<string, ShopSearchResult>();
-
-    products.forEach((product) => {
-      const matchCategory =
-        !selectedCategory || selectedCategory === 'Tất cả'
-          ? true
-          : product.category === selectedCategory;
-      if (!matchCategory) return;
-
-      const shopId = product.shop?.id ?? product.seller_id;
-      const shopName = product.shop?.store_name ?? product.shopName ?? '';
-      if (!shopId || !shopName) return;
-
-      const isShopMatch = normalizeText(shopName).includes(normalizedKeyword);
-      if (!isShopMatch) return;
-
-      const current = groups.get(shopId);
-      groups.set(shopId, {
-        id: shopId,
-        name: shopName,
-        avatar: product.shop?.avatar_url ?? current?.avatar ?? null,
-        matchedProductCount: (current?.matchedProductCount ?? 0) + 1,
+    let cancelled = false;
+    searchAll(keyword.trim())
+      .then((result) => {
+        if (cancelled) return;
+        setRemoteSearchProducts(result.products);
+        setRemoteSearchShops(result.shops);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRemoteSearchProducts([]);
+        setRemoteSearchShops([]);
       });
-    });
 
-    return Array.from(groups.values()).sort((a, b) => b.matchedProductCount - a.matchedProductCount);
-  }, [products, normalizedKeyword, selectedCategory]);
+    return () => {
+      cancelled = true;
+    };
+  }, [hasKeyword, keyword]);
+
+  const visibleShops = useMemo(() => remoteSearchShops, [remoteSearchShops]);
 
   const visibleProducts = useMemo(() => {
-    return filteredProducts.filter((product) => {
+    const sourceProducts = hasKeyword ? remoteSearchProducts : filteredProducts;
+    return sourceProducts.filter((product) => {
+      const matchCategory =
+        !selectedCategory || selectedCategory === 'Táº¥t cáº£'
+          ? true
+          : product.category === selectedCategory;
       const price = product.price ?? 0;
       const matchPrice = price >= priceRange[0] && price <= priceRange[1];
       const matchOrigin =
         selectedOrigins.length === 0 ||
         selectedOrigins.some((origin) => normalizeText(product.origin).includes(normalizeText(origin)));
 
-      return matchPrice && matchOrigin;
+      return matchCategory && matchPrice && matchOrigin;
     });
-  }, [filteredProducts, priceRange, selectedOrigins]);
+  }, [filteredProducts, hasKeyword, remoteSearchProducts, selectedCategory, priceRange, selectedOrigins]);
 
   const sellerVisibleProducts = useMemo(() => {
     const normalizedKeyword = sellerKeyword.trim().toLowerCase();
@@ -838,23 +836,23 @@ export default function SearchScreen() {
                 <TouchableOpacity
                   key={shop.id}
                   className="w-52 bg-white border border-slate-200 rounded-2xl px-3 py-3"
-                  onPress={() => setKeyword(shop.name)}
+                  onPress={() => router.push({ pathname: '/shop/[id]', params: { id: shop.id } })}
                   activeOpacity={0.9}
                 >
                   <View className="flex-row items-center">
                     <View className="w-11 h-11 rounded-full bg-emerald-50 border border-emerald-100 overflow-hidden items-center justify-center">
-                      {shop.avatar ? (
-                        <Image source={{ uri: resolveImageUrl(shop.avatar) }} className="w-full h-full" />
+                      {shop.avatar_url ? (
+                        <Image source={{ uri: resolveImageUrl(shop.avatar_url) }} className="w-full h-full" />
                       ) : (
                         <FontAwesome name="building-o" size={16} color="#059669" />
                       )}
                     </View>
                     <View className="ml-3 flex-1">
                       <Text className="text-slate-900 font-bold" numberOfLines={1}>
-                        {shop.name}
+                        {shop.store_name}
                       </Text>
                       <Text className="text-xs text-slate-500 mt-0.5" numberOfLines={1}>
-                        {shop.matchedProductCount} sản phẩm phù hợp
+                        {shop.product_count ?? 0} sản phẩm phù hợp
                       </Text>
                     </View>
                   </View>

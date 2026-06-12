@@ -97,10 +97,10 @@ export const useSellerDetail = (sellerId: string) => {
   });
 };
 
-export const useShopVouchers = (sellerId: string, accessToken?: string | null) => {
+export const useShopVouchers = (sellerId: string) => {
   return useQuery({
     queryKey: ['shop-vouchers', sellerId],
-    queryFn: () => getShopVouchers(accessToken as string, sellerId),
-    enabled: Boolean(sellerId && accessToken),
+    queryFn: () => getShopVouchers(sellerId),
+    enabled: Boolean(sellerId),
   });
 };

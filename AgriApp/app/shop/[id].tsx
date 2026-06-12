@@ -46,12 +46,13 @@ export default function SellerDetailScreen() {
   const featuredProducts = products.slice(0, 6);
   const topSellingProducts = products.slice(0, 6);
   const shopName = data?.shop?.store_name ?? data?.shop?.name ?? data?.full_name ?? 'Agri Shop';
+  const shopBanners = useMemo(() => data?.shop?.banners?.filter(Boolean).slice(0, 3) ?? [], [data?.shop?.banners]);
   const [savingVoucherId, setSavingVoucherId] = useState<string | null>(null);
 
   const {
     data: shopVouchers = [],
     isLoading: loadingShopVouchers,
-  } = useShopVouchers(sellerId, accessToken);
+  } = useShopVouchers(sellerId);
 
   const handleChatWithSeller = async () => {
     if (!sellerId) return;
@@ -163,12 +164,27 @@ export default function SellerDetailScreen() {
             </View>
           </View>
 
-          <SectionTitle title="Ma giam gia cua shop" />
-          {!accessToken ? (
-            <View className="mx-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <Text className="text-xs text-slate-600">Dang nhap de xem va luu voucher cua shop nay.</Text>
+          {shopBanners.length > 0 ? (
+            <View className="mt-4">
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16 }}
+              >
+                <View className="flex-row gap-3">
+                  {shopBanners.map((banner, index) => (
+                    <View key={`${banner}-${index}`} className="w-80 h-32 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200">
+                      <Image source={{ uri: resolveImageUrl(banner) }} className="w-full h-full" resizeMode="cover" />
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
             </View>
-          ) : loadingShopVouchers ? (
+          ) : null}
+
+          <SectionTitle title="Ma giam gia cua shop" />
+          {loadingShopVouchers ? (
             <View className="mx-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <Text className="text-xs text-slate-600">Dang tai voucher...</Text>
             </View>
@@ -207,12 +223,14 @@ export default function SellerDetailScreen() {
                           <TouchableOpacity
                             className="mt-2 self-start bg-orange-500 rounded-full px-3 py-1"
                             onPress={() => void handleSaveVoucher(voucher.id)}
-                            disabled={savingVoucherId === voucher.id || user?.role !== 'BUYER'}
+                            disabled={savingVoucherId === voucher.id || (!!user && user.role !== 'BUYER')}
                           >
                             <Text className="text-[10px] text-white font-black">
                               {savingVoucherId === voucher.id
                                 ? 'Dang luu...'
-                                : user?.role === 'BUYER'
+                                : !user
+                                  ? 'Dang nhap de luu'
+                                  : user.role === 'BUYER'
                                   ? 'Luu ngay'
                                   : 'Chi buyer'}
                             </Text>
