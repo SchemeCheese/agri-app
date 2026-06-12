@@ -352,6 +352,7 @@ export default function CheckoutScreen() {
     try {
       let orderIds: string[] = [];
       let payUrl: string | undefined;
+      let checkoutSessionId: string | undefined;
 
       if (isQuoteMode) {
         // ── Đặt hàng từ báo giá đã thương lượng ──────────────────────────────
@@ -371,6 +372,7 @@ export default function CheckoutScreen() {
 
         const orderId: string | undefined = checkoutResponse.data?.orderId;
         if (orderId) orderIds = [orderId];
+        checkoutSessionId = checkoutResponse.data?.checkoutSessionId;
         // checkout-quote trả payUrl trực tiếp cho MoMo (không cần gọi /payments/momo/create).
         payUrl = checkoutResponse.data?.payUrl || checkoutResponse.data?.deeplink;
       } else {
@@ -396,22 +398,26 @@ export default function CheckoutScreen() {
         );
 
         orderIds = checkoutResponse.data?.order_ids ?? [];
+        checkoutSessionId = checkoutResponse.data?.checkout_session_id;
 
-        if (paymentMethod === 'MOMO' && orderIds.length > 0) {
+        if (paymentMethod === 'MOMO' && checkoutSessionId) {
           const momoRes = await api.post(
             '/payments/momo/create',
-            { order_id: orderIds[0] },
+            { checkout_session_id: checkoutSessionId },
           );
           payUrl = momoRes.data?.payUrl || momoRes.data?.deeplink;
+          checkoutSessionId = momoRes.data?.checkoutSessionId ?? checkoutSessionId;
         }
       }
 
       if (paymentMethod === 'MOMO') {
-        if (payUrl) {
-          await Linking.openURL(payUrl);
-        } else {
-          Alert.alert('Thong bao', 'Da tao yeu cau MoMo, nhung khong lay duoc link thanh toan.');
+        if (!checkoutSessionId) {
+          throw new Error('Khong lay duoc ma phien thanh toan MoMo.');
         }
+        if (!payUrl) {
+          throw new Error('Da tao yeu cau MoMo, nhung khong lay duoc link thanh toan.');
+        }
+        await Linking.openURL(payUrl);
       }
 
       // Chỉ checkout giỏ hàng mới xoá sản phẩm khỏi giỏ.
@@ -426,6 +432,8 @@ export default function CheckoutScreen() {
           orderIds: orderIds.join(','),
           totalAmount: finalTotal.toString(),
           itemCount: lineItems.length.toString(),
+          paymentMethod,
+          paymentId: checkoutSessionId,
         },
       });
     } catch (error: any) {

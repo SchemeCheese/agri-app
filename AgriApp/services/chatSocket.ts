@@ -87,6 +87,14 @@ type ChatSocketMessage = {
     unit?: string | null;
     status?: string | null;
   } | null;
+  orderInfo?: {
+    orderId?: string;
+    orderStatus?: string | null;
+    paymentStatus?: string | null;
+    paymentMethod?: string | null;
+    checkoutSessionId?: string;
+    totalAmount?: number;
+  } | null;
 };
 
 type QuoteUpdatedEvent = {
@@ -107,6 +115,27 @@ type NegotiationAcceptedEvent = {
     unit?: string;
     sellerId?: string;
   };
+};
+
+export type QuoteAcceptedEvent = {
+  messageId?: string;
+  quoteMessageId?: string;
+  conversationId?: string;
+  orderId: string;
+  orderStatus: string;
+  paymentStatus: string;
+  paymentMethod: string;
+  checkoutSessionId?: string;
+  totalAmount?: number;
+};
+
+export type OrderStatusUpdatedEvent = {
+  orderId: string;
+  newStatus: string;
+  orderStatus?: string;
+  paymentStatus?: string | null;
+  paymentMethod?: string | null;
+  checkoutSessionId?: string | null;
 };
 
 let chatSocket: SocketLike | null = null;
@@ -169,7 +198,7 @@ const ensureChatSocket = async (accessToken: string): Promise<SocketLike> => {
 
   // Nếu chưa có socket → tạo mới
   if (!chatSocket) {
-    chatSocket = io(`${base}/chat`, {
+    const createdSocket = io(`${base}/chat`, {
       transports: ['websocket'],
       auth: { token: `Bearer ${accessToken}` },
       reconnection: true,
@@ -177,11 +206,12 @@ const ensureChatSocket = async (accessToken: string): Promise<SocketLike> => {
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       timeout: 10000,
-    });
+    }) as SocketLike;
+    chatSocket = createdSocket;
     connectedToken = accessToken;
 
     // BE chủ động disconnect khi auth fail → reset singleton để lần sau tạo lại
-    chatSocket.on('disconnect', (reason: string) => {
+    createdSocket.on('disconnect', (reason: string) => {
       // 'io server disconnect' = BE kick → cần manual reconnect
       if (reason === 'io server disconnect') {
         disconnectChatSocket();
@@ -190,6 +220,9 @@ const ensureChatSocket = async (accessToken: string): Promise<SocketLike> => {
   }
 
   const socket = chatSocket;
+  if (!socket) {
+    throw new Error('Khong the khoi tao ket noi chat.');
+  }
 
   connectingPromise = new Promise<SocketLike>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -335,6 +368,30 @@ export const subscribeNegotiationAccepted = async (
 
   return () => {
     socket.off('negotiationAccepted', listener);
+  };
+};
+
+export const subscribeQuoteAccepted = async (
+  accessToken: string,
+  listener: (event: QuoteAcceptedEvent) => void,
+) => {
+  const socket = await ensureChatSocket(accessToken);
+  socket.on('quoteAccepted', listener);
+
+  return () => {
+    socket.off('quoteAccepted', listener);
+  };
+};
+
+export const subscribeOrderStatusUpdated = async (
+  accessToken: string,
+  listener: (event: OrderStatusUpdatedEvent) => void,
+) => {
+  const socket = await ensureChatSocket(accessToken);
+  socket.on('orderStatusUpdated', listener);
+
+  return () => {
+    socket.off('orderStatusUpdated', listener);
   };
 };
 

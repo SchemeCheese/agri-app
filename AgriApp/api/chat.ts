@@ -53,6 +53,18 @@ export type ChatMessage = {
     unit?: string | null;
     status?: string | null;
   } | null;
+  orderInfo?: {
+    id?: string;
+    status?: string | null;
+    payment_status?: string | null;
+    payment_method?: string | null;
+    orderId?: string;
+    orderStatus?: string | null;
+    paymentStatus?: string | null;
+    paymentMethod?: string | null;
+    checkoutSessionId?: string;
+    totalAmount?: number;
+  } | null;
   conversationId?: string;
 };
 

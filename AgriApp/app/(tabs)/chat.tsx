@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Modal,
   ScrollView,
   Text,
@@ -14,6 +15,7 @@ import {
   View,
 } from 'react-native';
 
+import api from '@/api/client';
 import { ChatMessage, ConversationSummary, getConversationMessages, getConversations, uploadChatImage } from '@/api/chat';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
@@ -28,6 +30,8 @@ import {
   subscribeNegotiationAccepted,
   subscribeNegotiationCancelled,
   subscribeNewMessages,
+  subscribeOrderStatusUpdated,
+  subscribeQuoteAccepted,
   subscribeQuoteUpdated,
   subscribeUnreadUpdated,
 } from '@/services/chatSocket';
@@ -61,11 +65,50 @@ const statusClassName = (status?: string | null) => {
   return 'text-amber-700';
 };
 
+const formatOrderStatus = (status?: string | null) => {
+  const labels: Record<string, string> = {
+    PENDING: 'Cho nguoi ban xac nhan',
+    CONFIRMED: 'Da xac nhan',
+    SHIPPING: 'Dang giao hang',
+    COMPLETED: 'Da hoan thanh',
+    CANCELLED: 'Da huy',
+    ISSUE_REPORTED: 'Dang xu ly su co',
+    FAILED: 'That bai',
+    RETURNED: 'Da tra hang',
+    REFUND_PENDING: 'Cho hoan tien',
+    REFUNDED: 'Da hoan tien',
+  };
+  return status ? labels[status] ?? status : 'Dang cap nhat';
+};
+
+const formatPaymentStatus = (status?: string | null) => {
+  if (status === 'PAID') return 'Da thanh toan';
+  if (status === 'FAILED') return 'Thanh toan that bai';
+  if (status === 'REFUNDED') return 'Da hoan tien';
+  return 'Chua thanh toan';
+};
+
+const isNegotiationRequestMessage = (message: ChatMessage) =>
+  message.message_type === 'SYSTEM' &&
+  Boolean(message.context_product?.id) &&
+  message.proposed_quantity != null &&
+  message.proposed_price != null;
+
+const isNegotiationCancelledMessage = (message?: ChatMessage | null) =>
+  message?.message_type === 'SYSTEM' &&
+  /huy cuoc dam phan|hủy cuộc đàm phán/i.test(message.message_content ?? '');
+
+const isNegotiationEventMessage = (message: ChatMessage) =>
+  isNegotiationRequestMessage(message) ||
+  isNegotiationCancelledMessage(message) ||
+  message.message_type === 'NEGOTIATION_QUOTE';
+
 export default function ChatTabScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ conversationId?: string | string[] }>();
   const user = useAuthStore((state) => state.user);
   const accessToken = useAuthStore((state) => state.accessToken);
+  const setSession = useAuthStore((state) => state.setSession);
 
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(false);
@@ -78,6 +121,13 @@ export default function ChatTabScreen() {
   const [sendingQuote, setSendingQuote] = useState(false);
   const [processingQuoteMessageId, setProcessingQuoteMessageId] = useState<string | null>(null);
   const [cancelingNegotiation, setCancelingNegotiation] = useState(false);
+  const [checkoutQuoteMessage, setCheckoutQuoteMessage] = useState<ChatMessage | null>(null);
+  const [checkoutPhone, setCheckoutPhone] = useState('');
+  const [checkoutAddress, setCheckoutAddress] = useState('');
+  const [checkoutNote, setCheckoutNote] = useState('');
+  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'COD' | 'MOMO'>('COD');
+  const [submittingCheckout, setSubmittingCheckout] = useState(false);
+  const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
   const [unreadByConversation, setUnreadByConversation] = useState<Record<string, number>>({});
   const [sellerNegotiationDecision, setSellerNegotiationDecision] = useState<Record<string, 'accepted' | 'rejected'>>({});
 
@@ -88,6 +138,23 @@ export default function ChatTabScreen() {
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
   );
+  const latestNegotiationEvent = useMemo(
+    () => [...messages].reverse().find(isNegotiationEventMessage) ?? null,
+    [messages],
+  );
+  const pendingMomoSessionKey = useMemo(() => {
+    if (isSeller) return '';
+    return Array.from(new Set(
+      messages
+        .map((message) => message.orderInfo)
+        .filter((orderInfo) =>
+          Boolean(orderInfo?.checkoutSessionId) &&
+          (orderInfo?.payment_method ?? orderInfo?.paymentMethod) === 'MOMO' &&
+          !['PAID', 'FAILED', 'REFUNDED'].includes(orderInfo?.paymentStatus ?? orderInfo?.payment_status ?? ''),
+        )
+        .map((orderInfo) => orderInfo!.checkoutSessionId!),
+    )).sort().join(',');
+  }, [isSeller, messages]);
 
   const fetchConversationList = useCallback(async () => {
     if (!accessToken) return;
@@ -95,16 +162,21 @@ export default function ChatTabScreen() {
     setLoadingConversations(true);
     try {
       const data = await getConversations(accessToken);
-      setConversations(data);
+      const sortedData = [...data].sort(
+        (left, right) =>
+          new Date(right.lastMessage?.created_at ?? right.created_at ?? 0).getTime() -
+          new Date(left.lastMessage?.created_at ?? left.created_at ?? 0).getTime(),
+      );
+      setConversations(sortedData);
       // Hydrate unread từ BE — source of truth, đồng bộ qua reload/restart
       const fromServer: Record<string, number> = {};
-      for (const c of data) {
+      for (const c of sortedData) {
         if (typeof (c as any).unread_count === 'number') {
           fromServer[c.id] = (c as any).unread_count;
         }
       }
       setUnreadByConversation((current) => {
-        const activeIds = new Set(data.map((item) => item.id));
+        const activeIds = new Set(sortedData.map((item) => item.id));
         // BE value thắng — local optimistic chỉ dùng để hiển thị tức thì giữa các tick BE chưa kịp emit
         const merged: Record<string, number> = {};
         for (const id of activeIds) {
@@ -113,17 +185,17 @@ export default function ChatTabScreen() {
         return merged;
       });
 
-      if (data.length === 0) {
+      if (sortedData.length === 0) {
         setSelectedConversationId('');
         return;
       }
 
       setSelectedConversationId((current) => {
-        if (initialConversationId && data.some((item) => item.id === initialConversationId)) {
+        if (initialConversationId && sortedData.some((item) => item.id === initialConversationId)) {
           return initialConversationId;
         }
-        if (current && data.some((item) => item.id === current)) return current;
-        return data[0].id;
+        if (current && sortedData.some((item) => item.id === current)) return current;
+        return sortedData[0].id;
       });
     } catch {
       setConversations([]);
@@ -169,6 +241,30 @@ export default function ChatTabScreen() {
     }
   }, [accessToken, selectedConversationId]);
 
+  const refreshMessageHistorySilently = useCallback(async () => {
+    if (!accessToken || !selectedConversationId) return;
+
+    try {
+      const { items, nextCursor, hasMore } = await getConversationMessages(
+        accessToken,
+        selectedConversationId,
+        { limit: 30 },
+      );
+      setMessages((current) => {
+        const merged = new Map(current.map((message) => [message.id, message]));
+        for (const message of items) merged.set(message.id, message);
+        return Array.from(merged.values()).sort(
+          (left, right) =>
+            new Date(left.created_at ?? 0).getTime() - new Date(right.created_at ?? 0).getTime(),
+        );
+      });
+      nextCursorRef.current = nextCursor;
+      setHasMoreMessages(hasMore);
+    } catch {
+      // Socket remains the primary source; the next polling tick can retry.
+    }
+  }, [accessToken, selectedConversationId]);
+
   const loadMoreHistory = useCallback(async () => {
     if (!accessToken || !selectedConversationId) return;
     const cursor = nextCursorRef.current;
@@ -209,6 +305,58 @@ export default function ChatTabScreen() {
   }, [fetchMessageHistory]);
 
   useEffect(() => {
+    if (!selectedConversationId) return;
+
+    const timer = setInterval(() => {
+      void refreshMessageHistorySilently();
+    }, 8000);
+
+    return () => clearInterval(timer);
+  }, [refreshMessageHistorySilently, selectedConversationId]);
+
+  useEffect(() => {
+    if (!accessToken || isSeller) return;
+
+    const pendingSessions = pendingMomoSessionKey.split(',').filter(Boolean);
+
+    if (pendingSessions.length === 0) return;
+
+    let mounted = true;
+    const pollPaymentStatus = async () => {
+      await Promise.all(pendingSessions.map(async (checkoutSessionId) => {
+        try {
+          const { data } = await api.get(`/payments/momo/status/${checkoutSessionId}`);
+          if (!mounted) return;
+          setMessages((current) =>
+            current.map((message) => {
+              if (message.orderInfo?.checkoutSessionId !== checkoutSessionId) return message;
+              return {
+                ...message,
+                orderInfo: {
+                  ...message.orderInfo,
+                  orderStatus: data?.orderStatus ?? message.orderInfo.orderStatus,
+                  status: data?.orderStatus ?? message.orderInfo.status,
+                  paymentStatus: data?.paymentStatus ?? message.orderInfo.paymentStatus,
+                  payment_status: data?.paymentStatus ?? message.orderInfo.payment_status,
+                },
+              };
+            }),
+          );
+        } catch {
+          // Keep the existing status and retry while the payment is pending.
+        }
+      }));
+    };
+
+    void pollPaymentStatus();
+    const timer = setInterval(() => void pollPaymentStatus(), 5000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [accessToken, isSeller, pendingMomoSessionKey]);
+
+  useEffect(() => {
     if (!accessToken || conversations.length === 0) return;
 
     let mounted = true;
@@ -239,6 +387,8 @@ export default function ChatTabScreen() {
     let unsubscribeQuoteUpdated: (() => void) | null = null;
     let unsubscribeCancelled: (() => void) | null = null;
     let unsubscribeAccepted: (() => void) | null = null;
+    let unsubscribeQuoteAccepted: (() => void) | null = null;
+    let unsubscribeOrderStatus: (() => void) | null = null;
     let unsubscribeUnread: (() => void) | null = null;
 
     const setupRealtime = async () => {
@@ -317,6 +467,57 @@ export default function ChatTabScreen() {
           );
         });
 
+        unsubscribeQuoteAccepted = await subscribeQuoteAccepted(accessToken, (event) => {
+          if (!mounted) return;
+          const quoteMessageId = event.quoteMessageId ?? event.messageId;
+          if (!quoteMessageId) return;
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === quoteMessageId
+                ? {
+                    ...item,
+                    quote: { ...(item.quote ?? {}), status: 'ACCEPTED' },
+                    orderInfo: {
+                      orderId: event.orderId,
+                      id: event.orderId,
+                      orderStatus: event.orderStatus,
+                      status: event.orderStatus,
+                      paymentStatus: event.paymentStatus,
+                      payment_status: event.paymentStatus,
+                      paymentMethod: event.paymentMethod,
+                      payment_method: event.paymentMethod,
+                      checkoutSessionId: event.checkoutSessionId,
+                      totalAmount: event.totalAmount,
+                    },
+                  }
+                : item,
+            ),
+          );
+        });
+
+        unsubscribeOrderStatus = await subscribeOrderStatusUpdated(accessToken, (event) => {
+          if (!mounted) return;
+          setMessages((current) =>
+            current.map((item) => {
+              if (item.orderInfo?.orderId !== event.orderId && item.orderInfo?.id !== event.orderId) return item;
+              const orderStatus = event.orderStatus ?? event.newStatus;
+              return {
+                ...item,
+                orderInfo: {
+                  ...item.orderInfo,
+                  orderStatus,
+                  status: orderStatus,
+                  paymentStatus: event.paymentStatus ?? item.orderInfo.paymentStatus,
+                  payment_status: event.paymentStatus ?? item.orderInfo.payment_status,
+                  paymentMethod: event.paymentMethod ?? item.orderInfo.paymentMethod,
+                  payment_method: event.paymentMethod ?? item.orderInfo.payment_method,
+                  checkoutSessionId: event.checkoutSessionId ?? item.orderInfo.checkoutSessionId,
+                },
+              };
+            }),
+          );
+        });
+
         unsubscribeUnread = await subscribeUnreadUpdated(accessToken, (payload) => {
           if (!mounted) return;
           setUnreadByConversation((current) => ({
@@ -326,6 +527,12 @@ export default function ChatTabScreen() {
           setConversations((prev) =>
             prev.map((c) => (c.id === payload.conversationId ? { ...c, unread_count: payload.unread } as any : c)),
           );
+          if (payload.conversationId === selectedConversationId && payload.unread > 0) {
+            void refreshMessageHistorySilently();
+          }
+          if (payload.unread > 0) {
+            void fetchConversationList();
+          }
         });
       } catch {
         // Fallback to REST polling/history.
@@ -340,9 +547,11 @@ export default function ChatTabScreen() {
       if (unsubscribeQuoteUpdated) unsubscribeQuoteUpdated();
       if (unsubscribeCancelled) unsubscribeCancelled();
       if (unsubscribeAccepted) unsubscribeAccepted();
+      if (unsubscribeQuoteAccepted) unsubscribeQuoteAccepted();
+      if (unsubscribeOrderStatus) unsubscribeOrderStatus();
       if (unsubscribeUnread) unsubscribeUnread();
     };
-  }, [accessToken, fetchConversationList, fetchMessageHistory, selectedConversationId, user?.id]);
+  }, [accessToken, fetchConversationList, fetchMessageHistory, refreshMessageHistorySilently, selectedConversationId, user?.id]);
 
   const handleSendMessage = async () => {
     if (!accessToken || !selectedConversationId) return;
@@ -486,42 +695,223 @@ export default function ChatTabScreen() {
     }
   };
 
+  const handleSwitchToSeller = async () => {
+    try {
+      const { data } = await api.post('/auth/switch-role', { role: 'SELLER' });
+      setSession({ user: data.user, accessToken: data.access_token });
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      Alert.alert(
+        'Khong the chuyen vai tro',
+        Array.isArray(serverMessage) ? serverMessage[0] : serverMessage || 'Vui long thu lai.',
+      );
+    }
+  };
+
+  const handleAcceptProposedQuote = async (message: ChatMessage) => {
+    if (!accessToken || !selectedConversationId) return;
+
+    const productId = message.context_product?.id;
+    const productName = message.context_product?.name;
+    const unit = message.context_product?.unit || 'kg';
+    const quantity = Number(message.proposed_quantity || 0);
+    const price = Number(message.proposed_price || message.context_product?.reference_price || 0);
+
+    if (!productId || !productName || quantity <= 0 || price <= 0) {
+      Alert.alert('Khong hop le', 'Yeu cau thuong luong thieu thong tin de gui bao gia.');
+      return;
+    }
+
+    setSendingQuote(true);
+    try {
+      await sendNegotiationQuote(accessToken, {
+        conversationId: selectedConversationId,
+        productId,
+        productName,
+        quantity,
+        price,
+        unit,
+      });
+      setSellerNegotiationDecision((current) => ({ ...current, [message.id]: 'accepted' }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Khong the gui bao gia. Vui long thu lai.';
+      Alert.alert('Gui bao gia that bai', errorMessage);
+    } finally {
+      setSendingQuote(false);
+    }
+  };
+
+  const openQuoteCheckout = async (message: ChatMessage) => {
+    if (!message.quote?.productId || Number(message.quote.quantity || 0) <= 0 || Number(message.quote.price || 0) <= 0) {
+      Alert.alert('Khong hop le', 'Bao gia thieu thong tin de dat hang.');
+      return;
+    }
+
+    setCheckoutQuoteMessage(message);
+    setCheckoutPaymentMethod('COD');
+    setCheckoutNote('');
+    try {
+      const { data } = await api.get('/profile/me');
+      setCheckoutPhone(data?.phone_number ?? '');
+      setCheckoutAddress(data?.profile?.address ?? '');
+    } catch {
+      setCheckoutPhone('');
+      setCheckoutAddress('');
+    }
+  };
+
+  const handleCheckoutQuote = async () => {
+    if (!checkoutQuoteMessage || !accessToken) return;
+    if (!checkoutPhone.trim() || !checkoutAddress.trim()) {
+      Alert.alert('Thieu thong tin', 'Vui long nhap so dien thoai va dia chi giao hang.');
+      return;
+    }
+
+    setSubmittingCheckout(true);
+    try {
+      const { data } = await api.post('/orders/checkout-quote', {
+        quoteId: checkoutQuoteMessage.id,
+        paymentMethod: checkoutPaymentMethod,
+        shippingAddress: checkoutAddress.trim(),
+        phoneNumber: checkoutPhone.trim(),
+        note: checkoutNote.trim() || undefined,
+      });
+
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === checkoutQuoteMessage.id
+            ? {
+                ...item,
+                quote: { ...(item.quote ?? {}), status: 'ACCEPTED' },
+                orderInfo: {
+                  id: data?.orderId,
+                  orderId: data?.orderId,
+                  status: 'PENDING',
+                  orderStatus: 'PENDING',
+                  payment_status: 'UNPAID',
+                  paymentStatus: 'UNPAID',
+                  payment_method: checkoutPaymentMethod,
+                  paymentMethod: checkoutPaymentMethod,
+                  checkoutSessionId: data?.checkoutSessionId,
+                  totalAmount: data?.totalAmount,
+                },
+              }
+            : item,
+        ),
+      );
+
+      setCheckoutQuoteMessage(null);
+      if (checkoutPaymentMethod === 'MOMO') {
+        const payUrl = data?.payUrl || data?.deeplink;
+        if (!payUrl) throw new Error('Khong lay duoc link thanh toan MoMo.');
+        await Linking.openURL(payUrl);
+        Alert.alert('Da tao don hang', 'Hoan tat thanh toan MoMo, trang thai se tu dong cap nhat trong chat.');
+      } else {
+        Alert.alert('Dat hang thanh cong', 'Don hang COD da duoc tao va dang cho nguoi ban xac nhan.');
+      }
+      void refreshMessageHistorySilently();
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      Alert.alert(
+        'Khong the dat hang',
+        Array.isArray(serverMessage)
+          ? serverMessage[0]
+          : serverMessage === 'MISSING_SHIPPING_ADDRESS'
+            ? 'Vui long nhap day du dia chi va so dien thoai.'
+            : serverMessage || error?.message || 'Vui long thu lai.',
+      );
+    } finally {
+      setSubmittingCheckout(false);
+    }
+  };
+
+  const handleOrderAction = (orderId: string, action: 'confirm' | 'ship' | 'complete') => {
+    const config = {
+      confirm: {
+        title: 'Xac nhan don hang?',
+        message: 'Don hang se chuyen sang trang thai da xac nhan.',
+        nextStatus: 'CONFIRMED',
+      },
+      ship: {
+        title: 'Xac nhan da gui hang?',
+        message: 'Don hang se chuyen sang trang thai dang giao.',
+        nextStatus: 'SHIPPING',
+      },
+      complete: {
+        title: 'Da nhan duoc hang?',
+        message: 'Don hang se duoc danh dau hoan thanh.',
+        nextStatus: 'COMPLETED',
+      },
+    }[action];
+
+    Alert.alert(config.title, config.message, [
+      { text: 'Huy', style: 'cancel' },
+      {
+        text: 'Xac nhan',
+        onPress: async () => {
+          setProcessingOrderId(orderId);
+          try {
+            await api.patch(`/orders/${orderId}/${action}`);
+            setMessages((current) =>
+              current.map((item) => {
+                if (item.orderInfo?.orderId !== orderId && item.orderInfo?.id !== orderId) return item;
+                return {
+                  ...item,
+                  orderInfo: {
+                    ...item.orderInfo,
+                    status: config.nextStatus,
+                    orderStatus: config.nextStatus,
+                    ...(action === 'complete'
+                      ? { payment_status: 'PAID', paymentStatus: 'PAID' }
+                      : {}),
+                  },
+                };
+              }),
+            );
+            void refreshMessageHistorySilently();
+          } catch (error: any) {
+            const serverMessage = error?.response?.data?.message;
+            Alert.alert(
+              'Khong the cap nhat don',
+              Array.isArray(serverMessage) ? serverMessage[0] : serverMessage || 'Vui long thu lai.',
+            );
+          } finally {
+            setProcessingOrderId(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleRetryMomo = async (checkoutSessionId: string) => {
+    try {
+      const { data } = await api.post('/payments/momo/create', {
+        checkout_session_id: checkoutSessionId,
+      });
+      const payUrl = data?.payUrl || data?.deeplink;
+      if (!payUrl) throw new Error('Khong lay duoc link thanh toan MoMo.');
+      await Linking.openURL(payUrl);
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      Alert.alert(
+        'Khong mo duoc MoMo',
+        Array.isArray(serverMessage) ? serverMessage[0] : serverMessage || error?.message || 'Vui long thu lai.',
+      );
+    }
+  };
+
   const handleBuyerQuoteAction = async (messageId: string, action: 'ACCEPTED' | 'REJECTED') => {
     if (!accessToken || !selectedConversationId) return;
 
-    // ── Chấp nhận báo giá → điều hướng sang Checkout (chế độ báo giá) ─────────
-    // KHÔNG gọi respondToQuote ở đây: BE yêu cầu báo giá còn PENDING khi gọi
-    // /orders/checkout-quote (chính endpoint này mới là đường chốt báo giá thật
-    // — tự set ACCEPTED và tạo đơn). Gọi respondToQuote trước sẽ làm checkout-quote
-    // báo "đã xử lý rồi".
+    // checkout-quote atomically accepts the quote and creates the order.
+    // Calling respondToQuote first would make checkout-quote reject it as processed.
     if (action === 'ACCEPTED') {
-      const quoteMessage = messages.find((item) => item.id === messageId);
-      const quote = quoteMessage?.quote;
-      if (!quote?.productId || Number(quote.quantity || 0) <= 0 || Number(quote.price || 0) <= 0) {
-        Alert.alert('Khong hop le', 'Bao gia thieu thong tin de dat hang.');
+      const targetQuoteMessage = messages.find((item) => item.id === messageId);
+      if (!targetQuoteMessage) {
+        Alert.alert('Khong tim thay bao gia', 'Vui long tai lai cuoc tro chuyen.');
         return;
       }
-
-      // Ảnh sản phẩm — lấy từ tin nhắn yêu cầu thương lượng tương ứng (giống render).
-      const quoteImage =
-        messages.find(
-          (item) => item.context_product?.id === quote.productId && item.context_product?.image,
-        )?.context_product?.image ?? '';
-
-      router.push({
-        pathname: '/checkout',
-        params: {
-          quoteId: messageId,
-          productId: quote.productId,
-          productName: quote.productName ?? 'San pham',
-          quantity: String(quote.quantity ?? 0),
-          negotiatedPrice: String(quote.price ?? 0),
-          unit: quote.unit ?? 'kg',
-          sellerId: quoteMessage?.sender?.id ?? '',
-          sellerName: selectedConversation?.partner?.full_name ?? 'Shop',
-          image: quoteImage,
-        },
-      });
+      await openQuoteCheckout(targetQuoteMessage);
       return;
     }
 
@@ -542,31 +932,31 @@ export default function ChatTabScreen() {
 
   const renderMessageBubble = (message: ChatMessage) => {
     const isMine = message.sender?.id === user?.id;
-    const isNegotiationRequest =
-      message.message_type === 'SYSTEM' &&
-      Boolean(message.context_product?.id) &&
-      Number(message.proposed_quantity || 0) > 0 &&
-      Number(message.proposed_price || 0) > 0;
+    const isNegotiationRequest = isNegotiationRequestMessage(message);
 
     if (isNegotiationRequest) {
       const quantity = Number(message.proposed_quantity || 0);
       const proposedPrice = Number(message.proposed_price || 0);
       const total = quantity * proposedPrice;
       const productImage = message.context_product?.image;
-      const hasQuoteForRequest = messages.some(
-        (item) =>
-          item.message_type === 'NEGOTIATION_QUOTE' &&
-          item.quote?.productId &&
-          item.quote.productId === message.context_product?.id,
-      );
-      const hasCancelForRequest = messages.some(
-        (item) =>
-          item.message_type === 'SYSTEM' &&
-          (item.message_content || '').toLowerCase().includes('huy cuoc dam phan'),
-      );
+      const requestIndex = messages.findIndex((item) => item.id === message.id);
+      const nextNegotiationEvent = requestIndex >= 0
+        ? messages.slice(requestIndex + 1).find(isNegotiationEventMessage)
+        : null;
       const localDecision = sellerNegotiationDecision[message.id];
-      const finalDecision = localDecision ?? (hasQuoteForRequest ? 'accepted' : hasCancelForRequest ? 'rejected' : null);
-      const showSellerActionButtons = isSeller && !finalDecision;
+      const finalDecision = localDecision ??
+        (nextNegotiationEvent?.message_type === 'NEGOTIATION_QUOTE'
+          ? 'accepted'
+          : isNegotiationCancelledMessage(nextNegotiationEvent as ChatMessage)
+            ? 'rejected'
+            : nextNegotiationEvent
+              ? 'superseded'
+              : null);
+      const isLatestOpenRequest =
+        latestNegotiationEvent?.id === message.id &&
+        isNegotiationRequestMessage(latestNegotiationEvent);
+      const showSellerActionButtons = isSeller && !isMine && isLatestOpenRequest;
+      const showSwitchSellerButton = !isSeller && Boolean(user?.is_seller) && !isMine && isLatestOpenRequest;
 
       return (
         <View key={message.id} className="mb-3">
@@ -576,7 +966,7 @@ export default function ChatTabScreen() {
             </Text>
 
             <View className="flex-row items-center">
-              <Image source={{ uri: resolveImageUrl(productImage) }} className="w-11 h-11 rounded-xl" />
+              <Image source={{ uri: resolveImageUrl(productImage || undefined) }} className="w-11 h-11 rounded-xl" />
               <View className="ml-2.5 flex-1">
                 <Text className="text-slate-900 font-bold" numberOfLines={1}>{message.context_product?.name || 'San pham'}</Text>
                 <Text className="text-emerald-700 font-semibold text-xs mt-0.5">{formatPrice(message.context_product?.reference_price || 0)}/{message.context_product?.unit || 'kg'}</Text>
@@ -599,25 +989,49 @@ export default function ChatTabScreen() {
               </View>
             </View>
 
-            {showSellerActionButtons ? (
-              <View className="flex-row mt-3 gap-2">
-                <TouchableOpacity className="flex-1 rounded-xl bg-emerald-600 py-2.5 items-center" onPress={() => handleOpenQuoteDialog(message)}>
-                  <Text className="text-white font-black">Chap nhan dam phan</Text>
-                </TouchableOpacity>
+            {showSwitchSellerButton ? (
+              <TouchableOpacity
+                className="mt-3 rounded-xl bg-slate-900 py-2.5 items-center"
+                onPress={() => void handleSwitchToSeller()}
+              >
+                <Text className="text-white font-black">Chuyen sang che do ban de bao gia</Text>
+              </TouchableOpacity>
+            ) : showSellerActionButtons ? (
+              <View className="mt-3 gap-2">
                 <TouchableOpacity
-                  className={`px-4 rounded-xl border py-2.5 items-center ${cancelingNegotiation ? 'border-slate-300 bg-slate-100' : 'border-rose-200 bg-rose-50'}`}
-                  onPress={() => void handleRejectNegotiation()}
-                  disabled={cancelingNegotiation}
+                  className={`rounded-xl py-2.5 items-center ${sendingQuote ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                  onPress={() => void handleAcceptProposedQuote(message)}
+                  disabled={sendingQuote}
                 >
-                  <Text className={`font-black ${cancelingNegotiation ? 'text-slate-500' : 'text-rose-600'}`}>Tu choi</Text>
+                  <Text className="text-white font-black">
+                    {sendingQuote ? 'Dang gui...' : 'Chap nhan & gui bao gia'}
+                  </Text>
                 </TouchableOpacity>
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    className="flex-1 rounded-xl border border-emerald-300 bg-white py-2.5 items-center"
+                    onPress={() => handleOpenQuoteDialog(message)}
+                    disabled={sendingQuote}
+                  >
+                    <Text className="text-emerald-700 font-black">Gui gia khac</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`flex-1 rounded-xl border py-2.5 items-center ${cancelingNegotiation ? 'border-slate-300 bg-slate-100' : 'border-rose-200 bg-rose-50'}`}
+                    onPress={() => void handleRejectNegotiation()}
+                    disabled={cancelingNegotiation || sendingQuote}
+                  >
+                    <Text className={`font-black ${cancelingNegotiation ? 'text-slate-500' : 'text-rose-600'}`}>Tu choi</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            ) : isSeller ? (
+            ) : isSeller && !isMine ? (
               <View className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5">
                 <Text className={`text-xs font-bold ${finalDecision === 'accepted' ? 'text-emerald-700' : 'text-rose-600'}`}>
                   {finalDecision === 'accepted'
                     ? 'Ban da chon chap nhan dam phan. Vui long theo doi phan hoi bao gia o ben duoi.'
-                    : 'Ban da chon tu choi dam phan. Khong the thao tac lai yeu cau nay.'}
+                    : finalDecision === 'rejected'
+                      ? 'Ban da tu choi yeu cau thuong luong nay.'
+                      : 'Yeu cau cu da duoc thay the boi mot lan thuong luong moi.'}
                 </Text>
               </View>
             ) : null}
@@ -631,7 +1045,7 @@ export default function ChatTabScreen() {
       const quantity = Number(message.quote.quantity || 0);
       const price = Number(message.quote.price || 0);
       const total = quantity * price;
-      const canBuyerRespond = !isSeller && !isMine && message.quote.status === 'PENDING';
+      const canBuyerRespond = !isMine && message.quote.status === 'PENDING';
       const quoteImage =
         messages.find(
           (item) =>
@@ -639,6 +1053,11 @@ export default function ChatTabScreen() {
             item.context_product.id === message.quote?.productId &&
             item.context_product?.image,
         )?.context_product?.image ?? null;
+      const orderInfo = message.orderInfo;
+      const orderId = orderInfo?.orderId ?? orderInfo?.id;
+      const orderStatus = orderInfo?.orderStatus ?? orderInfo?.status;
+      const paymentStatus = orderInfo?.paymentStatus ?? orderInfo?.payment_status;
+      const paymentMethod = orderInfo?.paymentMethod ?? orderInfo?.payment_method;
 
       return (
         <View key={message.id} className="mb-3">
@@ -658,6 +1077,70 @@ export default function ChatTabScreen() {
             <Text className={`text-xs font-bold mt-2 ${statusClassName(message.quote.status)}`}>
               Trang thai: {formatQuoteStatus(message.quote.status)}
             </Text>
+
+            {orderInfo && orderId ? (
+              <View className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-xs font-black text-emerald-800">Don #{orderId.slice(-8).toUpperCase()}</Text>
+                  <Text className="text-[11px] font-bold text-emerald-700">{paymentMethod || 'COD'}</Text>
+                </View>
+                <Text className="text-xs text-slate-700 mt-1">Don hang: {formatOrderStatus(orderStatus)}</Text>
+                <Text className={`text-xs font-bold mt-1 ${paymentStatus === 'PAID' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  Thanh toan: {formatPaymentStatus(paymentStatus)}
+                </Text>
+
+                <View className="mt-3 flex-row flex-wrap gap-2">
+                  {isSeller &&
+                  orderStatus === 'PENDING' &&
+                  (paymentMethod !== 'MOMO' || paymentStatus === 'PAID') ? (
+                    <TouchableOpacity
+                      className={`rounded-lg px-3 py-2 ${processingOrderId === orderId ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                      disabled={processingOrderId === orderId}
+                      onPress={() => handleOrderAction(orderId, 'confirm')}
+                    >
+                      <Text className="text-white text-xs font-black">Xac nhan don</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {isSeller &&
+                  orderStatus === 'PENDING' &&
+                  paymentMethod === 'MOMO' &&
+                  paymentStatus !== 'PAID' ? (
+                    <Text className="text-xs font-bold text-amber-700 py-2">
+                      Dang cho nguoi mua thanh toan MoMo
+                    </Text>
+                  ) : null}
+                  {isSeller && orderStatus === 'CONFIRMED' ? (
+                    <TouchableOpacity
+                      className={`rounded-lg px-3 py-2 ${processingOrderId === orderId ? 'bg-slate-300' : 'bg-blue-600'}`}
+                      disabled={processingOrderId === orderId}
+                      onPress={() => handleOrderAction(orderId, 'ship')}
+                    >
+                      <Text className="text-white text-xs font-black">Da gui hang</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {!isSeller && orderStatus === 'SHIPPING' ? (
+                    <TouchableOpacity
+                      className={`rounded-lg px-3 py-2 ${processingOrderId === orderId ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                      disabled={processingOrderId === orderId}
+                      onPress={() => handleOrderAction(orderId, 'complete')}
+                    >
+                      <Text className="text-white text-xs font-black">Da nhan hang</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {!isSeller &&
+                  paymentMethod === 'MOMO' &&
+                  paymentStatus !== 'PAID' &&
+                  orderInfo.checkoutSessionId ? (
+                    <TouchableOpacity
+                      className="rounded-lg bg-fuchsia-600 px-3 py-2"
+                      onPress={() => void handleRetryMomo(orderInfo.checkoutSessionId!)}
+                    >
+                      <Text className="text-white text-xs font-black">Thanh toan MoMo</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
 
             {canBuyerRespond ? (
               <View className="mt-3 flex-row gap-2">
@@ -902,6 +1385,105 @@ export default function ChatTabScreen() {
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={Boolean(checkoutQuoteMessage)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!submittingCheckout) setCheckoutQuoteMessage(null);
+        }}
+      >
+        <View className="flex-1 bg-black/45 justify-end">
+          <View className="bg-white rounded-t-3xl px-4 pt-4 pb-8 max-h-[90%]">
+            <View className="flex-row items-center justify-between mb-3">
+              <Text className="text-lg font-black text-slate-900">Chot bao gia trong chat</Text>
+              <TouchableOpacity
+                disabled={submittingCheckout}
+                onPress={() => setCheckoutQuoteMessage(null)}
+              >
+                <FontAwesome name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 mb-3">
+                <Text className="font-bold text-slate-900" numberOfLines={1}>
+                  {checkoutQuoteMessage?.quote?.productName || 'San pham'}
+                </Text>
+                <Text className="text-xs text-slate-600 mt-1">
+                  {Number(checkoutQuoteMessage?.quote?.quantity || 0)} {checkoutQuoteMessage?.quote?.unit || 'kg'} x {formatPrice(Number(checkoutQuoteMessage?.quote?.price || 0))}
+                </Text>
+                <Text className="text-emerald-700 font-black mt-1">
+                  Tong: {formatPrice(
+                    Number(checkoutQuoteMessage?.quote?.quantity || 0) *
+                    Number(checkoutQuoteMessage?.quote?.price || 0),
+                  )}
+                </Text>
+              </View>
+
+              <Text className="text-xs font-bold text-slate-600 mb-1">So dien thoai</Text>
+              <TextInput
+                className="border border-slate-200 rounded-xl px-3 py-3 mb-3"
+                keyboardType="phone-pad"
+                value={checkoutPhone}
+                onChangeText={setCheckoutPhone}
+                placeholder="Nhap so dien thoai nhan hang"
+              />
+
+              <Text className="text-xs font-bold text-slate-600 mb-1">Dia chi giao hang</Text>
+              <TextInput
+                className="border border-slate-200 rounded-xl px-3 py-3 mb-3"
+                value={checkoutAddress}
+                onChangeText={setCheckoutAddress}
+                placeholder="Nhap dia chi giao hang"
+                multiline
+              />
+
+              <Text className="text-xs font-bold text-slate-600 mb-1">Ghi chu</Text>
+              <TextInput
+                className="border border-slate-200 rounded-xl px-3 py-3 mb-3"
+                value={checkoutNote}
+                onChangeText={setCheckoutNote}
+                placeholder="Ghi chu cho nguoi ban (khong bat buoc)"
+                multiline
+              />
+
+              <Text className="text-xs font-bold text-slate-600 mb-2">Phuong thuc thanh toan</Text>
+              <View className="flex-row gap-2 mb-4">
+                {(['COD', 'MOMO'] as const).map((method) => {
+                  const selected = checkoutPaymentMethod === method;
+                  return (
+                    <TouchableOpacity
+                      key={method}
+                      className={`flex-1 rounded-xl border py-3 items-center ${
+                        selected ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200 bg-white'
+                      }`}
+                      onPress={() => setCheckoutPaymentMethod(method)}
+                    >
+                      <Text className={`font-black ${selected ? 'text-emerald-700' : 'text-slate-600'}`}>
+                        {method === 'COD' ? 'Thanh toan khi nhan' : 'MoMo'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity
+                className={`rounded-xl py-3.5 items-center ${submittingCheckout ? 'bg-slate-300' : 'bg-emerald-600'}`}
+                disabled={submittingCheckout}
+                onPress={() => void handleCheckoutQuote()}
+              >
+                {submittingCheckout ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text className="text-white font-black">Xac nhan dat hang</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </ScreenContainer>
   );

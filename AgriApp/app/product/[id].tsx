@@ -194,11 +194,6 @@ export default function ProductDetailScreen() {
       return;
     }
 
-    if (!product.min_negotiation_qty) {
-      Alert.alert('Khong ho tro', 'San pham nay khong ho tro thuong luong gia.');
-      return;
-    }
-
     const minQty = Math.max(1, Number(product.min_negotiation_qty || 1));
     const defaultQty = Math.max(quantity, minQty);
     const defaultPrice = Math.max(1, Math.round((product.price || 0) * 0.9));
@@ -639,7 +634,7 @@ export default function ProductDetailScreen() {
               unit={product.unit}
               stock={product.stock}
               shopName={product.shop?.store_name}
-              shopDescription={product.shop?.description}
+              shopDescription={product.shop?.description || undefined}
             />
           )}
 
