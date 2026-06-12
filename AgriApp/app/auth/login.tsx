@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity
 
 import api from '@/api/client';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
-import { ensureGoogleConfigured, GOOGLE_EXPO_GO_IOS_MESSAGE, useGoogleAuth } from '@/services/googleAuth';
+import { ensureGoogleConfigured, useGoogleAuth } from '@/services/googleAuth';
 import { useAuthStore } from '@/store/authStore';
 
 type LoginResponse = {
@@ -225,10 +225,6 @@ export default function LoginScreen() {
               </>
             )}
           </TouchableOpacity>
-
-          {googleUnsupported ? (
-            <Text className="text-xs text-amber-600 text-center mt-2">{GOOGLE_EXPO_GO_IOS_MESSAGE}</Text>
-          ) : null}
 
           <View className="mt-6 flex-row justify-center items-center">
             <Text className="text-slate-600">Chưa có tài khoản? </Text>

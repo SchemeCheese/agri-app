@@ -240,6 +240,14 @@ const getOrderStatusUi = (status: string) => {
       return { label: 'Da huy', bg: 'bg-red-50', text: 'text-red-700', icon: 'times-circle-o' as const };
     case 'ISSUE_REPORTED':
       return { label: 'Đang tranh chấp', bg: 'bg-orange-50', text: 'text-orange-700', icon: 'warning' as const };
+    case 'REFUND_PENDING':
+      return { label: 'Chờ hoàn tiền', bg: 'bg-amber-50', text: 'text-amber-700', icon: 'clock-o' as const };
+    case 'REFUNDED':
+      return { label: 'Đã hoàn tiền', bg: 'bg-teal-50', text: 'text-teal-700', icon: 'check-circle' as const };
+    case 'RETURNED':
+      return { label: 'Đã trả hàng', bg: 'bg-rose-50', text: 'text-rose-700', icon: 'reply' as const };
+    case 'FAILED':
+      return { label: 'Giao thất bại', bg: 'bg-red-50', text: 'text-red-700', icon: 'times-circle-o' as const };
     default:
       return { label: 'Dang xu ly', bg: 'bg-slate-50', text: 'text-slate-700', icon: 'info-circle' as const };
   }
@@ -257,6 +265,11 @@ const getTimelineStepIndex = (status: string) => {
       return 2;
     case 'COMPLETED':
       return 3;
+    case 'REFUND_PENDING':
+    case 'REFUNDED':
+    case 'RETURNED':
+    case 'CANCELLED':
+      return -1;
     default:
       return 0;
   }
@@ -266,6 +279,8 @@ const getPaymentStatusText = (order?: OrderData | null) => {
   const payment = order?.payments?.[0];
   if (!payment) return 'Chua thanh toan';
   if (payment.status === 'PAID' || payment.status === 'SUCCESS') return 'Da thanh toan';
+  if (payment.status === 'REFUNDING') return 'Đang hoàn tiền';
+  if (payment.status === 'REFUNDED') return 'Đã hoàn tiền';
   if (payment.payment_method === 'COD') return 'Thanh toan khi nhan hang (COD)';
   return 'Cho thanh toan';
 };
@@ -501,19 +516,49 @@ export default function ProfileScreen() {
 
   const pickProductImages = async (target: 'create' | 'edit') => {
     const ImagePicker = await import('expo-image-picker');
+    const ImageManipulator = await import('expo-image-manipulator');
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert('Can quyen', 'App can quyen truy cap thu vien anh.');
       return;
     }
+    const currentCount =
+      target === 'create'
+        ? newProductImages.length
+        : (editingProduct?.images?.length ?? 0) + editProductImages.length;
+    const remaining = Math.max(0, 5 - currentCount);
+    if (remaining === 0) {
+      Alert.alert('Du anh', 'Moi san pham duoc chon toi da 5 anh.');
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
+      quality: 1,
       allowsMultipleSelection: true,
-      selectionLimit: 5,
+      selectionLimit: remaining,
+      orderedSelection: true,
     });
     if (result.canceled) return;
-    const picked = result.assets.map((a) => ({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName }));
+
+    const picked = await Promise.all(
+      result.assets.slice(0, remaining).map(async (asset, index) => {
+        const actions =
+          asset.width && asset.width > 1600
+            ? [{ resize: { width: 1600 } }]
+            : [];
+        const processed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+          compress: 0.75,
+          format: ImageManipulator.SaveFormat.JPEG,
+        });
+        return {
+          uri: processed.uri,
+          mimeType: 'image/jpeg',
+          fileName: `product-${Date.now()}-${index}.jpg`,
+        };
+      }),
+    );
+
     if (target === 'create') setNewProductImages((prev) => [...prev, ...picked].slice(0, 5));
     else setEditProductImages((prev) => [...prev, ...picked].slice(0, 5));
   };
@@ -568,7 +613,7 @@ export default function ProfileScreen() {
       const mime = img.mimeType || 'image/jpeg';
       const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
       const name = img.fileName || `product-${Date.now()}-${idx}.${ext}`;
-      form.append('files', { uri: img.uri, name, type: mime } as any);
+      form.append('images', { uri: img.uri, name, type: mime } as any);
     });
     return form;
   };
@@ -596,7 +641,7 @@ export default function ProfileScreen() {
       );
 
       await api.post('/seller/products', form, {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'multipart/form-data' },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
 
       await fetchSellerProducts();
@@ -633,8 +678,10 @@ export default function ProfileScreen() {
         },
         editProductImages,
       );
+      form.append('replace_images', 'true');
+      editingProduct.images?.forEach((url) => form.append('retained_image_urls', url));
       await api.patch(`/seller/products/${editingProduct.id}`, form, {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'multipart/form-data' },
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
       await fetchSellerProducts();
       setEditingProduct(null);
@@ -3011,7 +3058,18 @@ export default function ProfileScreen() {
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
                       <View className="flex-row gap-2">
                         {editingProduct.images.map((url, i) => (
-                          <Image key={`${url}-${i}`} source={{ uri: resolveImageUrl(url) }} className="w-20 h-20 rounded-xl bg-slate-100" />
+                          <View key={`${url}-${i}`} className="relative">
+                            <Image source={{ uri: resolveImageUrl(url) }} className="w-20 h-20 rounded-xl bg-slate-100" />
+                            <TouchableOpacity
+                              className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 items-center justify-center"
+                              onPress={() => setEditingProduct({
+                                ...editingProduct,
+                                images: editingProduct.images?.filter((_, index) => index !== i) ?? [],
+                              })}
+                            >
+                              <FontAwesome name="times" size={11} color="#fff" />
+                            </TouchableOpacity>
+                          </View>
                         ))}
                       </View>
                     </ScrollView>
@@ -3033,7 +3091,7 @@ export default function ProfileScreen() {
                           </TouchableOpacity>
                         </View>
                       ))}
-                      {editProductImages.length < 5 ? (
+                      {(editingProduct.images?.length ?? 0) + editProductImages.length < 5 ? (
                         <TouchableOpacity
                           className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 items-center justify-center bg-slate-50"
                           onPress={() => void pickProductImages('edit')}

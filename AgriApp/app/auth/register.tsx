@@ -5,7 +5,7 @@ import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View 
 
 import api from '@/api/client';
 import { ScreenContainer } from '@/components/common/ScreenContainer';
-import { ensureGoogleConfigured, GOOGLE_EXPO_GO_IOS_MESSAGE, useGoogleAuth } from '@/services/googleAuth';
+import { ensureGoogleConfigured, useGoogleAuth } from '@/services/googleAuth';
 import { useAuthStore } from '@/store/authStore';
 
 type RegisterRole = 'BUYER' | 'SELLER';
@@ -256,10 +256,6 @@ export default function RegisterScreen() {
                   </>
                 )}
               </TouchableOpacity>
-
-              {googleUnsupported ? (
-                <Text className="text-xs text-amber-600 text-center mt-2">{GOOGLE_EXPO_GO_IOS_MESSAGE}</Text>
-              ) : null}
             </>
           ) : (
             <>

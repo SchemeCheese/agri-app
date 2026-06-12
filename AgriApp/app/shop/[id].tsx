@@ -138,10 +138,12 @@ export default function SellerDetailScreen() {
                     </View>
                   ) : null}
                 </View>
-                <View className="mb-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-1 flex-row items-center">
-                  <FontAwesome name="check-circle" size={10} color="#15803D" />
-                  <Text className="ml-1 text-[10px] font-bold text-emerald-700">Uy tin</Text>
-                </View>
+                {data.shop?.isVerified ? (
+                  <View className="mb-1 bg-amber-50 border border-amber-300 rounded-full px-2 py-1 flex-row items-center">
+                    <FontAwesome name="check-circle" size={11} color="#D97706" />
+                    <Text className="ml-1 text-[10px] font-bold text-amber-700">Đã xác minh</Text>
+                  </View>
+                ) : null}
               </View>
 
               <View className="mt-3 flex-row gap-2">

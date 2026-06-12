@@ -15,6 +15,11 @@ const baseURL =
   process.env.EXPO_PUBLIC_API_URL ??
   (__DEV__ ? localBaseUrl : railwayPublicBaseUrl);
 
+// Nguồn base URL DUY NHẤT — ảnh upload (đường dẫn tương đối /uploads/...) PHẢI
+// resolve về đúng backend mà API đang gọi, nếu không ảnh sẽ 404 (ảnh dán link
+// tuyệt đối thì không bị vì bỏ qua base). resolveImageUrl dùng lại hằng này.
+export const API_BASE_URL = baseURL;
+
 const api = axios.create({
   baseURL,
   timeout: 10000,

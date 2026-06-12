@@ -36,6 +36,7 @@ export type Product = {
     store_name?: string;
     avatar_url?: string | null;
     location?: string | null;
+    isVerified?: boolean;
   };
 };
 

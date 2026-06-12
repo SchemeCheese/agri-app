@@ -1,4 +1,5 @@
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { FontAwesome } from '@expo/vector-icons';
 
 import { Product } from '@/api/product';
 import { resolveImageUrl } from '@/utils/image';
@@ -10,6 +11,7 @@ type ShopCard = {
   avatar?: string | null;
   productCount: number;
   rating: number;
+  isVerified: boolean;
 };
 
 const buildTopShops = (products: Product[]): ShopCard[] => {
@@ -26,6 +28,7 @@ const buildTopShops = (products: Product[]): ShopCard[] => {
       avatar: product.shop?.avatar_url ?? null,
       productCount: nextCount,
       rating: product.rating ?? 5,
+      isVerified: product.shop?.isVerified ?? false,
     });
   });
 
@@ -65,6 +68,12 @@ export const TopShopsSection = ({ products, onPressShop }: TopShopsSectionProps)
               <Text className="mt-3 text-slate-900 font-bold" numberOfLines={1}>
                 {shop.name}
               </Text>
+              {shop.isVerified ? (
+                <View className="mt-1 self-start flex-row items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5">
+                  <FontAwesome name="check-circle" size={10} color="#D97706" />
+                  <Text className="ml-1 text-[10px] font-bold text-amber-700">Đã xác minh</Text>
+                </View>
+              ) : null}
               <Text className="text-xs text-slate-500 mt-1">
                 {shop.productCount} san pham · ⭐ {Number(shop.rating).toFixed(1)}
               </Text>

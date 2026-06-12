@@ -274,7 +274,7 @@ export default function HomeScreen() {
 
         <TopShopsSection
           products={products}
-          onPressShop={() => router.push('/(tabs)/search')}
+          onPressShop={(shopId) => router.push({ pathname: '/shop/[id]', params: { id: shopId } })}
         />
 
         <PromoSection />
