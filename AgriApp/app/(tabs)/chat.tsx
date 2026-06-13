@@ -96,7 +96,9 @@ const isNegotiationRequestMessage = (message: ChatMessage) =>
 
 const isNegotiationCancelledMessage = (message?: ChatMessage | null) =>
   message?.message_type === 'SYSTEM' &&
-  /huy cuoc dam phan|hủy cuộc đàm phán/i.test(message.message_content ?? '');
+  /huy cuoc dam phan|\u0111\u00e3 h\u1ee7y cu\u1ed9c \u0111\u00e0m ph\u00e1n/i.test(
+    message.message_content ?? '',
+  );
 
 const isNegotiationEventMessage = (message: ChatMessage) =>
   isNegotiationRequestMessage(message) ||
@@ -655,6 +657,7 @@ export default function ChatTabScreen() {
       });
 
       setSellerNegotiationDecision((current) => ({ ...current, [quoteTargetMessage.id]: 'accepted' }));
+      void refreshMessageHistorySilently();
 
       setQuoteTargetMessage(null);
       setQuotePrice('');
@@ -733,6 +736,7 @@ export default function ChatTabScreen() {
         unit,
       });
       setSellerNegotiationDecision((current) => ({ ...current, [message.id]: 'accepted' }));
+      void refreshMessageHistorySilently();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Khong the gui bao gia. Vui long thu lai.';
       Alert.alert('Gui bao gia that bai', errorMessage);
@@ -752,8 +756,8 @@ export default function ChatTabScreen() {
     setCheckoutNote('');
     try {
       const { data } = await api.get('/profile/me');
-      setCheckoutPhone(data?.phone_number ?? '');
-      setCheckoutAddress(data?.profile?.address ?? '');
+      setCheckoutPhone(typeof data?.phone_number === 'string' ? data.phone_number : '');
+      setCheckoutAddress(typeof data?.profile?.address === 'string' ? data.profile.address : '');
     } catch {
       setCheckoutPhone('');
       setCheckoutAddress('');
@@ -1045,7 +1049,7 @@ export default function ChatTabScreen() {
       const quantity = Number(message.quote.quantity || 0);
       const price = Number(message.quote.price || 0);
       const total = quantity * price;
-      const canBuyerRespond = !isMine && message.quote.status === 'PENDING';
+      const canBuyerRespond = !isSeller && !isMine && message.quote.status === 'PENDING';
       const quoteImage =
         messages.find(
           (item) =>

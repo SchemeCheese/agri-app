@@ -46,12 +46,14 @@ export type ChatMessage = {
   proposed_quantity?: number | null;
   proposed_price?: number | null;
   quote?: {
+    messageId?: string;
     productId?: string;
     productName?: string;
     quantity?: number | null;
     price?: number | null;
     unit?: string | null;
     status?: string | null;
+    createdAt?: string;
   } | null;
   orderInfo?: {
     id?: string;
@@ -82,6 +84,124 @@ export type InitiateChatResponse = {
     min_negotiation_qty?: number | null;
     image?: string | null;
   } | null;
+};
+
+const toOptionalString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined;
+
+const toNullableString = (value: unknown): string | null =>
+  typeof value === 'string' ? value : null;
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const normalizeChatMessage = (value: unknown): ChatMessage | null => {
+  if (!value || typeof value !== 'object') return null;
+
+  const raw = value as Record<string, any>;
+  const id = toOptionalString(raw.id);
+  if (!id) return null;
+
+  const sender = raw.sender && typeof raw.sender === 'object'
+    ? {
+        id: toOptionalString(raw.sender.id) ?? '',
+        full_name: toNullableString(raw.sender.full_name),
+      }
+    : undefined;
+  const contextProduct = raw.context_product && typeof raw.context_product === 'object'
+    ? {
+        id: toOptionalString(raw.context_product.id) ?? '',
+        name: toOptionalString(raw.context_product.name) ?? 'San pham',
+        reference_price: toNullableNumber(raw.context_product.reference_price) ?? undefined,
+        unit: toOptionalString(raw.context_product.unit),
+        min_negotiation_qty: toNullableNumber(raw.context_product.min_negotiation_qty),
+        image: toNullableString(raw.context_product.image),
+      }
+    : null;
+  const quote = raw.quote && typeof raw.quote === 'object'
+    ? {
+        messageId: toOptionalString(raw.quote.messageId) ?? id,
+        productId: toOptionalString(raw.quote.productId),
+        productName: toOptionalString(raw.quote.productName),
+        quantity: toNullableNumber(raw.quote.quantity),
+        price: toNullableNumber(raw.quote.price),
+        unit: toNullableString(raw.quote.unit),
+        status: toNullableString(raw.quote.status),
+        createdAt: toOptionalString(raw.quote.createdAt) ?? toOptionalString(raw.created_at),
+      }
+    : raw.message_type === 'NEGOTIATION_QUOTE' && raw.quote_product_id
+      ? {
+          messageId: id,
+          productId: toOptionalString(raw.quote_product_id),
+          productName: toOptionalString(raw.quote_product_name),
+          quantity: toNullableNumber(raw.quote_quantity),
+          price: toNullableNumber(raw.quote_price),
+          unit: toNullableString(raw.quote_unit),
+          status: toNullableString(raw.quote_status) ?? 'PENDING',
+          createdAt: toOptionalString(raw.created_at),
+        }
+      : null;
+  const orderInfo = raw.orderInfo && typeof raw.orderInfo === 'object'
+    ? {
+        id: toOptionalString(raw.orderInfo.id),
+        status: toNullableString(raw.orderInfo.status),
+        payment_status: toNullableString(raw.orderInfo.payment_status),
+        payment_method: toNullableString(raw.orderInfo.payment_method),
+        orderId: toOptionalString(raw.orderInfo.orderId),
+        orderStatus: toNullableString(raw.orderInfo.orderStatus),
+        paymentStatus: toNullableString(raw.orderInfo.paymentStatus),
+        paymentMethod: toNullableString(raw.orderInfo.paymentMethod),
+        checkoutSessionId: toOptionalString(raw.orderInfo.checkoutSessionId),
+        totalAmount: toNullableNumber(raw.orderInfo.totalAmount) ?? undefined,
+      }
+    : null;
+
+  return {
+    id,
+    sender: sender?.id ? sender : undefined,
+    message_content: toOptionalString(raw.message_content),
+    message_type: toOptionalString(raw.message_type),
+    image_url: toNullableString(raw.image_url),
+    created_at: toOptionalString(raw.created_at),
+    context_product: contextProduct?.id ? contextProduct : null,
+    proposed_quantity: toNullableNumber(raw.proposed_quantity),
+    proposed_price: toNullableNumber(raw.proposed_price),
+    quote,
+    orderInfo,
+    conversationId: toOptionalString(raw.conversationId ?? raw.conversation_id),
+  };
+};
+
+const normalizeConversation = (value: unknown): ConversationSummary | null => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, any>;
+  const id = toOptionalString(raw.id);
+  if (!id) return null;
+
+  const partner = raw.partner && typeof raw.partner === 'object' ? raw.partner : {};
+  const lastMessage = raw.lastMessage && typeof raw.lastMessage === 'object'
+    ? {
+        id: toOptionalString(raw.lastMessage.id) ?? '',
+        content: toOptionalString(raw.lastMessage.content),
+        message_type: toOptionalString(raw.lastMessage.message_type),
+        created_at: toOptionalString(raw.lastMessage.created_at),
+      }
+    : null;
+
+  return {
+    id,
+    partner: {
+      id: toOptionalString(partner.id) ?? '',
+      full_name: toOptionalString(partner.full_name),
+      avatar: toNullableString(partner.avatar),
+    },
+    lastMessage: lastMessage?.id ? lastMessage : null,
+    unread_count: toNullableNumber(raw.unread_count) ?? 0,
+    created_at: toOptionalString(raw.created_at),
+  };
 };
 
 // ─── Upload ảnh chat ─────────────────────────────────────────────────────
@@ -153,7 +273,9 @@ export const getConversations = async (accessToken: string) => {
     },
   });
 
-  return Array.isArray(data) ? data : [];
+  return Array.isArray(data)
+    ? data.map(normalizeConversation).filter((item): item is ConversationSummary => item !== null)
+    : [];
 };
 
 export interface GetMessagesResult {
@@ -178,11 +300,17 @@ export const getConversationMessages = async (
 
   // BE shape mới: { items, nextCursor, hasMore }. Fallback cho mảng cũ.
   if (Array.isArray(data)) {
-    return { items: data, nextCursor: null, hasMore: false };
+    return {
+      items: data.map(normalizeChatMessage).filter((item: ChatMessage | null): item is ChatMessage => item !== null),
+      nextCursor: null,
+      hasMore: false,
+    };
   }
   return {
-    items: Array.isArray(data?.items) ? data.items : [],
-    nextCursor: data?.nextCursor ?? null,
+    items: Array.isArray(data?.items)
+      ? data.items.map(normalizeChatMessage).filter((item: ChatMessage | null): item is ChatMessage => item !== null)
+      : [],
+    nextCursor: toNullableString(data?.nextCursor),
     hasMore: !!data?.hasMore,
   };
 };

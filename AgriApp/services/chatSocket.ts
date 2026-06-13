@@ -1,4 +1,5 @@
 import api from '@/api/client';
+import { normalizeChatMessage } from '@/api/chat';
 
 type SocketLike = {
   connected: boolean;
@@ -80,12 +81,14 @@ type ChatSocketMessage = {
   proposed_quantity?: number | null;
   proposed_price?: number | null;
   quote?: {
+    messageId?: string;
     productId?: string;
     productName?: string;
     quantity?: number | null;
     price?: number | null;
     unit?: string | null;
     status?: string | null;
+    createdAt?: string;
   } | null;
   orderInfo?: {
     orderId?: string;
@@ -328,10 +331,14 @@ export const subscribeNewMessages = async (
   listener: (message: ChatSocketMessage) => void,
 ) => {
   const socket = await ensureChatSocket(accessToken);
-  socket.on('newMessage', listener);
+  const safeListener = (value: unknown) => {
+    const message = normalizeChatMessage(value);
+    if (message) listener(message);
+  };
+  socket.on('newMessage', safeListener);
 
   return () => {
-    socket.off('newMessage', listener);
+    socket.off('newMessage', safeListener);
   };
 };
 
